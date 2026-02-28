@@ -20,9 +20,18 @@ const app = express()
 
 // ── Security ──────────────────────────────────────────────
 app.use(helmet())
+const allowedOrigins = env.cors.origins ?? [env.cors.clientUrl, env.cors.adminUrl]
+
 app.use(cors({
-  origin: [env.cors.clientUrl, env.cors.adminUrl],
+  origin: (origin, callback) => {
+    // allow requests with no origin (curl, server-to-server, health checks)
+    if (!origin) return callback(null, true)
+    if (allowedOrigins.includes(origin)) return callback(null, true)
+    callback(new Error(`CORS: origin ${origin} not allowed`))
+  },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }))
 
 // ── Rate limiting ─────────────────────────────────────────

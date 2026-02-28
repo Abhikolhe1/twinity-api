@@ -12,7 +12,10 @@ async function ensureDb(): Promise<void> {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default async function handler(req: any, res: any): Promise<void> {
-  await ensureDb()
+  // Skip DB connection for OPTIONS preflight — CORS headers must fire immediately
+  if (req.method !== 'OPTIONS') {
+    await ensureDb()
+  }
   return new Promise((resolve, reject) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     app(req, res, (err: any) => {

@@ -36,6 +36,11 @@ export const env = {
   cors: {
     clientUrl: process.env.CLIENT_URL || 'http://localhost:3000',
     adminUrl: process.env.ADMIN_URL || 'http://localhost:3001',
+    // CORS_ORIGINS overrides both — comma-separated list for production
+    // e.g. "https://twinity-web-app.vercel.app,https://twinity-admin.vercel.app"
+    origins: process.env.CORS_ORIGINS
+      ? process.env.CORS_ORIGINS.split(',').map(s => s.trim()).filter(Boolean)
+      : null,
   },
   rateLimit: {
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
