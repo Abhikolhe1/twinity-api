@@ -128,3 +128,29 @@ export async function getMe(req: Request & { userId?: string }, res: Response, n
     next(err)
   }
 }
+
+export async function updateProfile(req: Request & { userId?: string }, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { name, avatarUrl } = req.body
+
+    const update: Record<string, unknown> = {}
+    if (name && typeof name === 'string') update.name = name.trim()
+    if (avatarUrl !== undefined) update.avatarUrl = avatarUrl
+
+    if (Object.keys(update).length === 0) {
+      res.json({ success: true, message: 'Nothing to update' })
+      return
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.userId,
+      { $set: update },
+      { new: true, runValidators: true }
+    )
+    if (!user) throw new AppError('User not found', 404)
+
+    res.json({ success: true, user })
+  } catch (err) {
+    next(err)
+  }
+}

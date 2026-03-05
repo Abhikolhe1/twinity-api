@@ -7,6 +7,7 @@ export interface IUser extends Document {
   password: string
   phone?: string
   company?: string
+  avatarUrl?: string
   isEmailVerified: boolean
   emailVerificationToken?: string
   passwordResetToken?: string
@@ -25,6 +26,7 @@ const UserSchema = new Schema<IUser>(
     password: { type: String, required: true, minlength: 8, select: false },
     phone: { type: String, trim: true },
     company: { type: String, trim: true },
+    avatarUrl: { type: String },
     isEmailVerified: { type: Boolean, default: false },
     emailVerificationToken: { type: String, select: false },
     passwordResetToken: { type: String, select: false },
