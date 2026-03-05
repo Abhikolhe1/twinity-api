@@ -1,12 +1,12 @@
 import { Router } from 'express'
 import { listRoles, createRole, updateRole, deleteRole } from '../controllers/role.controller'
-import { requireAdmin, requireRole } from '../middleware/adminAuth'
+import { requireAdmin, requirePermission } from '../middleware/adminAuth'
 
 const router = Router()
 
-router.get('/', requireAdmin, requireRole('super-admin'), listRoles)
-router.post('/', requireAdmin, requireRole('super-admin'), createRole)
-router.put('/:id', requireAdmin, requireRole('super-admin'), updateRole)
-router.delete('/:id', requireAdmin, requireRole('super-admin'), deleteRole)
+router.get('/', requireAdmin, requirePermission('roles.view'), listRoles)
+router.post('/', requireAdmin, requirePermission('roles.manage'), createRole)
+router.put('/:id', requireAdmin, requirePermission('roles.manage'), updateRole)
+router.delete('/:id', requireAdmin, requirePermission('roles.manage'), deleteRole)
 
 export default router

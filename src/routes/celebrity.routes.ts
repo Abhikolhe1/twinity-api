@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { listCelebrities, getCelebrity, createCelebrity, updateCelebrity, toggleCelebrityStatus, deleteCelebrity } from '../controllers/celebrity.controller'
-import { requireAdmin, requireRole } from '../middleware/adminAuth'
+import { requireAdmin, requirePermission } from '../middleware/adminAuth'
 
 const router = Router()
 
@@ -9,9 +9,9 @@ router.get('/', listCelebrities)
 router.get('/:slug', getCelebrity)
 
 // Admin
-router.post('/', requireAdmin, requireRole('super-admin', 'admin'), createCelebrity)
-router.put('/:id', requireAdmin, requireRole('super-admin', 'admin'), updateCelebrity)
-router.patch('/:id/toggle', requireAdmin, requireRole('super-admin', 'admin'), toggleCelebrityStatus)
-router.delete('/:id', requireAdmin, requireRole('super-admin'), deleteCelebrity)
+router.post('/', requireAdmin, requirePermission('celebrities.manage'), createCelebrity)
+router.put('/:id', requireAdmin, requirePermission('celebrities.manage'), updateCelebrity)
+router.patch('/:id/toggle', requireAdmin, requirePermission('celebrities.manage'), toggleCelebrityStatus)
+router.delete('/:id', requireAdmin, requirePermission('celebrities.manage'), deleteCelebrity)
 
 export default router
