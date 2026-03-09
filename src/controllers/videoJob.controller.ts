@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import { VideoJob, VideoJobStatus } from '../models/VideoJob'
 import { Celebrity } from '../models/Celebrity'
+import { User } from '../models/User'
 import { Lead } from '../models/Lead'
 import { AppError } from '../middleware/errorHandler'
 import { queueService } from '../services/queue.service'
@@ -158,7 +159,9 @@ export async function adminUpdateJobStatus(req: Request, res: Response, next: Ne
     await job.save()
 
     // Notify user of status change (non-blocking)
-    emailService.sendJobStatusUpdate(String(job.userId), status, job.referenceId).catch(() => null)
+    User.findById(job.userId).then(user => {
+      if (user) emailService.sendJobStatusUpdate(user.email, user.name, status, job.referenceId).catch(() => null)
+    }).catch(() => null)
 
     res.json({ success: true, data: job })
   } catch (err) {

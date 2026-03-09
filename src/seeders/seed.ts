@@ -12,6 +12,7 @@ const MONGO_URI      = process.env.MONGODB_URI       || 'mongodb://localhost:270
 const ADMIN_EMAIL    = process.env.ADMIN_EMAIL        || 'admin@twinity.ai'
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD     || 'Admin@1234'
 const ADMIN_NAME     = process.env.ADMIN_NAME         || 'Super Admin'
+const CLIENT_URL     = process.env.CLIENT_URL         || 'http://localhost:3000'
 
 // ─── Seed data ────────────────────────────────────────────────
 
@@ -22,6 +23,7 @@ const CELEBRITIES = [
     languages: ['en', 'pt'], tags: ['football', 'sports', 'global'],
     tagsAr: ['كرة القدم', 'رياضة'],
     initials: 'CR', avatarColor: 'linear-gradient(135deg,#1a73e8,#0d47a1)',
+    thumbnailUrl: `${CLIENT_URL}/celebs/cr7.svg`,
     isActive: true, isFeatured: true, totalOrders: 34,
     bio: 'Global football icon and five-time Ballon d\'Or winner.',
     bioAr: 'أيقونة كرة القدم العالمية والفائز بخمس جوائز الكرة الذهبية.',
@@ -33,6 +35,7 @@ const CELEBRITIES = [
     languages: ['ar', 'en'], tags: ['football', 'sports', 'arabic'],
     tagsAr: ['كرة القدم', 'رياضة', 'عربي'],
     initials: 'MS', avatarColor: 'linear-gradient(135deg,#e53935,#b71c1c)',
+    thumbnailUrl: `${CLIENT_URL}/celebs/salah.svg`,
     isActive: true, isFeatured: true, totalOrders: 28,
     bio: 'Egyptian football king, Liverpool and Egypt captain.',
     bioAr: 'ملك الكرة المصري، قائد ليفربول ومنتخب مصر.',
@@ -44,6 +47,7 @@ const CELEBRITIES = [
     languages: ['ar'], tags: ['music', 'arabic', 'pop'],
     tagsAr: ['موسيقى', 'عربي', 'بوب'],
     initials: 'AD', avatarColor: 'linear-gradient(135deg,#f57c00,#e65100)',
+    thumbnailUrl: `${CLIENT_URL}/celebs/amr-diab.svg`,
     isActive: true, isFeatured: false, totalOrders: 17,
     bio: 'Legend of Arabic pop music with over 30 years of hits.',
     bioAr: 'أسطورة الموسيقى العربية مع أكثر من 30 عاماً من النجاحات.',
@@ -55,6 +59,7 @@ const CELEBRITIES = [
     languages: ['ar', 'en'], tags: ['music', 'arabic', 'pop'],
     tagsAr: ['موسيقى', 'عربي', 'بوب'],
     initials: 'NA', avatarColor: 'linear-gradient(135deg,#e91e8c,#ad1457)',
+    thumbnailUrl: `${CLIENT_URL}/celebs/nancy-ajram.svg`,
     isActive: true, isFeatured: false, totalOrders: 12,
     bio: 'Lebanese pop star known throughout the Arab world.',
     bioAr: 'نجمة البوب اللبنانية المعروفة في جميع أنحاء العالم العربي.',
@@ -66,6 +71,7 @@ const CELEBRITIES = [
     languages: ['en'], tags: ['youtube', 'viral', 'social-media'],
     tagsAr: ['يوتيوب', 'فيروسي', 'سوشيال ميديا'],
     initials: 'MB', avatarColor: 'linear-gradient(135deg,#43a047,#1b5e20)',
+    thumbnailUrl: `${CLIENT_URL}/celebs/mrbeast.svg`,
     isActive: true, isFeatured: false, totalOrders: 9,
     bio: 'World\'s most subscribed YouTuber with viral philanthropic content.',
     bioAr: 'أكثر يوتيوبر اشتراكاً في العالم بمحتوى فيروسي.',
@@ -77,6 +83,7 @@ const CELEBRITIES = [
     languages: ['ar'], tags: ['music', 'entertainment', 'arabic'],
     tagsAr: ['موسيقى', 'ترفيه', 'عربي'],
     initials: 'HW', avatarColor: 'linear-gradient(135deg,#7b1fa2,#4a148c)',
+    thumbnailUrl: `${CLIENT_URL}/celebs/haifa.svg`,
     isActive: false, isFeatured: false, totalOrders: 6,
     bio: 'Lebanese entertainment icon with a massive Middle East fanbase.',
     bioAr: 'أيقونة الترفيه اللبنانية بقاعدة جماهيرية ضخمة في الشرق الأوسط.',
@@ -114,7 +121,12 @@ async function seed() {
     const existing = await Celebrity.findOne({ slug: c.slug })
     if (existing) {
       celebMap[c.slug] = existing._id as mongoose.Types.ObjectId
-      console.log(`[skip] Celebrity already exists: ${c.name}`)
+      if (!existing.thumbnailUrl && c.thumbnailUrl) {
+        await Celebrity.findByIdAndUpdate(existing._id, { $set: { thumbnailUrl: c.thumbnailUrl } })
+        console.log(`[patch] Celebrity thumbnailUrl updated: ${c.name}`)
+      } else {
+        console.log(`[skip] Celebrity already exists: ${c.name}`)
+      }
     } else {
       const created = await Celebrity.create(c)
       celebMap[c.slug] = created._id as mongoose.Types.ObjectId

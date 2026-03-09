@@ -83,6 +83,7 @@ export async function forgotPassword(req: Request, res: Response, next: NextFunc
   try {
     const { email } = req.body
     const user = await User.findOne({ email })
+    let resetUrl: string | undefined
     // Always respond OK to prevent email enumeration
     if (user) {
       const resetToken = uuidv4()
@@ -90,8 +91,11 @@ export async function forgotPassword(req: Request, res: Response, next: NextFunc
       user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
       await user.save({ validateBeforeSave: false })
       emailService.sendPasswordResetEmail(email, user.name, resetToken).catch(() => null)
+      if (env.nodeEnv === 'development') {
+        resetUrl = `${env.cors.clientUrl}/reset-password/${resetToken}`
+      }
     }
-    res.json({ success: true, message: 'If this email exists, a reset link has been sent.' })
+    res.json({ success: true, message: 'If this email exists, a reset link has been sent.', ...(resetUrl ? { resetUrl } : {}) })
   } catch (err) {
     next(err)
   }
@@ -114,6 +118,47 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
     await user.save()
 
     res.json({ success: true, message: 'Password reset successfully' })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function googleAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { accessToken } = req.body
+    if (!accessToken) throw new AppError('Access token required', 400)
+
+    // Fetch user info from Google
+    const googleRes = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${accessToken}`)
+    if (!googleRes.ok) throw new AppError('Failed to verify Google token', 401)
+    const googleUser = await googleRes.json() as { sub: string; email: string; name: string; picture?: string }
+
+    if (!googleUser.email) throw new AppError('Google account has no email', 400)
+
+    // Find or create user
+    let user = await User.findOne({ email: googleUser.email })
+    if (!user) {
+      user = await User.create({
+        name: googleUser.name || googleUser.email.split('@')[0],
+        email: googleUser.email,
+        password: uuidv4(), // random password — user will log in via Google only
+        isEmailVerified: true,
+        status: 'active',
+        avatarUrl: googleUser.picture,
+      })
+    } else {
+      if (user.status === 'blocked') throw new AppError('Account has been blocked', 403)
+      user.lastLoginAt = new Date()
+      if (googleUser.picture && !user.avatarUrl) user.avatarUrl = googleUser.picture
+      await user.save({ validateBeforeSave: false })
+    }
+
+    const token = signToken(String(user._id), user.email)
+    res.json({
+      success: true,
+      token,
+      user: { id: user._id, name: user.name, email: user.email, status: user.status, isEmailVerified: user.isEmailVerified },
+    })
   } catch (err) {
     next(err)
   }

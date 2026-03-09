@@ -25,6 +25,13 @@ export const env = {
     fromEmail: process.env.SES_FROM_EMAIL || 'no-reply@twinity.ai',
     adminEmail: process.env.ADMIN_EMAIL || 'admin@twinity.ai',
   },
+  smtp: {
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: process.env.SMTP_PORT || 587,
+    secure: process.env.SMTP_SECURE === 'true',
+    user: process.env.SMTP_USER || 'user',
+    pass: process.env.SMTP_PASS || 'password',
+  },
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
   },
