@@ -20,6 +20,8 @@ export async function register(req: Request, res: Response, next: NextFunction):
     const verificationToken = uuidv4()
     const user = await User.create({
       name, email, password, phone, company,
+      authProvider: 'email',
+      hasEmailPassword: true,
       emailVerificationToken: verificationToken,
       status: 'pending',
     })
@@ -47,6 +49,9 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
       throw new AppError('Invalid email or password', 401)
     }
     if (user.status === 'blocked') throw new AppError('Account has been blocked', 403)
+    if (user.authProvider === 'google' && !user.hasEmailPassword) {
+      throw new AppError('This account uses Google Sign-In. Please use the Google button to sign in.', 403)
+    }
 
     user.lastLoginAt = new Date()
     await user.save({ validateBeforeSave: false })
@@ -141,12 +146,17 @@ export async function googleAuth(req: Request, res: Response, next: NextFunction
       user = await User.create({
         name: googleUser.name || googleUser.email.split('@')[0],
         email: googleUser.email,
-        password: uuidv4(), // random password — user will log in via Google only
+        password: uuidv4(), // random — real password only set via setPassword endpoint
+        authProvider: 'google',
+        hasEmailPassword: false,
         isEmailVerified: true,
         status: 'active',
         avatarUrl: googleUser.picture,
       })
     } else {
+      if (user.authProvider === 'email') {
+        throw new AppError('This email is registered with email & password. Please sign in with your email and password.', 403)
+      }
       if (user.status === 'blocked') throw new AppError('Account has been blocked', 403)
       user.lastLoginAt = new Date()
       if (googleUser.picture && !user.avatarUrl) user.avatarUrl = googleUser.picture
@@ -169,6 +179,26 @@ export async function getMe(req: Request & { userId?: string }, res: Response, n
     const user = await User.findById(req.userId)
     if (!user) throw new AppError('User not found', 404)
     res.json({ success: true, user })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function setPassword(req: Request & { userId?: string }, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { password } = req.body
+    if (!password || typeof password !== 'string' || password.length < 8) {
+      throw new AppError('Password must be at least 8 characters', 400)
+    }
+
+    const user = await User.findById(req.userId).select('+password')
+    if (!user) throw new AppError('User not found', 404)
+
+    user.password = password
+    user.hasEmailPassword = true
+    await user.save()
+
+    res.json({ success: true, message: 'Password set successfully. You can now sign in with email and password.' })
   } catch (err) {
     next(err)
   }

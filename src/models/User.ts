@@ -8,6 +8,8 @@ export interface IUser extends Document {
   phone?: string
   company?: string
   avatarUrl?: string
+  authProvider: 'email' | 'google'
+  hasEmailPassword: boolean
   isEmailVerified: boolean
   emailVerificationToken?: string
   passwordResetToken?: string
@@ -27,6 +29,8 @@ const UserSchema = new Schema<IUser>(
     phone: { type: String, trim: true },
     company: { type: String, trim: true },
     avatarUrl: { type: String },
+    authProvider: { type: String, enum: ['email', 'google'], default: 'email' },
+    hasEmailPassword: { type: Boolean, default: false },
     isEmailVerified: { type: Boolean, default: false },
     emailVerificationToken: { type: String, select: false },
     passwordResetToken: { type: String, select: false },
