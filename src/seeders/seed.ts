@@ -7,6 +7,7 @@ import { Celebrity } from '../models/Celebrity'
 import { User } from '../models/User'
 import { VideoJob } from '../models/VideoJob'
 import { Lead } from '../models/Lead'
+import { Template } from '../models/Template'
 
 const MONGO_URI      = process.env.MONGODB_URI       || 'mongodb://localhost:27017/twinity'
 const ADMIN_EMAIL    = process.env.ADMIN_EMAIL        || 'admin@twinity.ai'
@@ -221,6 +222,189 @@ async function seed() {
       statusHistory:  [{ status: l.status, timestamp: new Date() }],
     })
     console.log(`[ok]   Lead created: ${user?.name} → ${l.celebName} (${l.status})`)
+  }
+
+  // 6. Prompt Templates
+  const TEMPLATES = [
+    {
+      name: 'Birthday Wish',
+      nameAr: 'تهنئة عيد الميلاد',
+      description: 'A warm, personalised birthday greeting from a celebrity to a fan or loved one.',
+      descriptionAr: 'تهنئة عيد ميلاد دافئة وشخصية من نجم مشهور لمعجب أو شخص عزيز.',
+      purpose: 'Birthday Wish',
+      purposeAr: 'تهنئة عيد الميلاد',
+      sampleScript: `Hey [Name]! It's me, and I just wanted to take a moment to wish you the most amazing birthday ever. You deserve every bit of happiness today and always. Keep chasing your dreams — you've got what it takes. Happy Birthday, superstar!`,
+      sampleScriptAr: `مرحباً [الاسم]! أنا هنا لأتمنى لك عيد ميلاد رائع ومميز. أنت تستحق كل سعادة اليوم وكل يوم. استمر في السعي نحو أحلامك — لديك كل ما يلزم. عيد ميلاد سعيد يا نجم!`,
+      productTypes: ['greeting'],
+      duration: '30s',
+      isActive: true,
+    },
+    {
+      name: 'Ramadan & Eid Greeting',
+      nameAr: 'تهنئة رمضان والعيد',
+      description: 'A heartfelt seasonal greeting for Ramadan or Eid celebrations, perfect for the Arab market.',
+      descriptionAr: 'تهنئة موسمية صادقة لشهر رمضان أو عيد الفطر، مثالية للسوق العربي.',
+      purpose: 'Holiday Greeting',
+      purposeAr: 'تهنئة موسمية',
+      sampleScript: `Ramadan Kareem, everyone! This holy month is a time for reflection, gratitude, and being close to the people we love. I'm wishing you and your entire family a blessed Ramadan filled with peace, joy, and countless blessings. Ramadan Mubarak!`,
+      sampleScriptAr: `رمضان كريم يا أصدقاء! هذا الشهر الكريم هو وقت للتأمل والامتنان والقرب من من نحبهم. أتمنى لكم ولعائلتكم رمضاناً مباركاً مليئاً بالسلام والبهجة والبركات. رمضان مبارك!`,
+      productTypes: ['greeting', 'avatar-studio'],
+      duration: '30s',
+      isActive: true,
+    },
+    {
+      name: 'Congratulations',
+      nameAr: 'مبروك',
+      description: 'A celebratory message for achievements such as graduation, promotion, or a new business.',
+      descriptionAr: 'رسالة احتفالية للإنجازات كالتخرج أو الترقية أو بدء مشروع جديد.',
+      purpose: 'Congratulations',
+      purposeAr: 'تهنئة بالإنجاز',
+      sampleScript: `[Name], congratulations! What you've achieved is no small thing — it takes real dedication, hard work, and heart to get there. I'm proud of you and I know this is just the beginning of something incredible. Well done, and keep going!`,
+      sampleScriptAr: `[الاسم]، مبروك! ما حققته ليس أمراً بسيطاً — يتطلب تفانياً حقيقياً وعملاً دؤوباً وشجاعة للوصول إلى هنا. أنا فخور بك وأعلم أن هذه مجرد البداية لشيء رائع. أحسنت، واستمر في التقدم!`,
+      productTypes: ['greeting', 'avatar-studio'],
+      duration: '30s',
+      isActive: true,
+    },
+    {
+      name: 'Motivational Shoutout',
+      nameAr: 'رسالة تحفيزية',
+      description: 'A high-energy motivational message to inspire someone to push through challenges.',
+      descriptionAr: 'رسالة تحفيزية عالية الطاقة لإلهام شخص ما لتجاوز التحديات.',
+      purpose: 'Motivation',
+      purposeAr: 'تحفيز وإلهام',
+      sampleScript: `Listen, [Name] — I need you to hear this: you are capable of more than you know. Every champion has been exactly where you are right now, doubting themselves, feeling the pressure. But the ones who make it are the ones who don't quit. Get up. Keep going. The world needs what only you can bring.`,
+      sampleScriptAr: `اسمعني يا [الاسم] — أحتاج منك أن تستمع لهذا: أنت قادر على أكثر مما تتخيل. كل بطل كان في مكانك تماماً، يشك في نفسه، يشعر بالضغط. لكن من ينجحون هم من لا يستسلمون. قم. استمر. العالم يحتاج ما لا يستطيع أحد تقديمه غيرك.`,
+      productTypes: ['greeting', 'avatar-studio', 'full-body'],
+      duration: '45s',
+      isActive: true,
+    },
+    {
+      name: 'Product Launch Announcement',
+      nameAr: 'إطلاق منتج جديد',
+      description: 'A compelling celebrity-led announcement for a new product or service launch.',
+      descriptionAr: 'إعلان جذاب بقيادة نجم مشهور لإطلاق منتج أو خدمة جديدة.',
+      purpose: 'Product Launch',
+      purposeAr: 'إطلاق منتج',
+      sampleScript: `I'm excited to tell you about something that's genuinely changing the game — [Product Name]. I've seen a lot of products come and go, but this one is different. It's built for people who want results, not excuses. I use it myself and the difference is real. Go check it out at [Website] — trust me, you won't regret it.`,
+      sampleScriptAr: `أنا متحمس لأخبركم عن شيء يغير قواعد اللعبة حقاً — [اسم المنتج]. رأيت الكثير من المنتجات تأتي وتذهب، لكن هذا مختلف. صُنع للأشخاص الذين يريدون نتائج حقيقية. أستخدمه بنفسي والفرق واضح. اذهب وتحقق منه على [الموقع] — ثق بي، لن تندم.`,
+      productTypes: ['avatar-studio', 'full-body'],
+      duration: '60s',
+      isActive: true,
+    },
+    {
+      name: 'Brand Endorsement',
+      nameAr: 'تأييد علامة تجارية',
+      description: 'A professional brand endorsement video for corporate clients and advertisers.',
+      descriptionAr: 'فيديو احترافي للمصادقة على علامة تجارية للعملاء المؤسسيين والمعلنين.',
+      purpose: 'Business Intro',
+      purposeAr: 'تقديم تجاري',
+      sampleScript: `When it comes to [Brand Name], I don't just talk about it — I believe in it. They stand for quality, for excellence, and for the kind of standards that I hold myself to every single day. If you're looking for the best in [industry/category], look no further. [Brand Name] — this is the real deal.`,
+      sampleScriptAr: `عندما يتعلق الأمر بـ[اسم العلامة التجارية]، أنا لا أتحدث عنها فحسب — بل أؤمن بها. إنها تمثل الجودة والتميز والمعايير التي أحمل نفسي عليها كل يوم. إذا كنت تبحث عن الأفضل في [القطاع/الفئة]، لا تبحث أكثر. [اسم العلامة التجارية] — هذا هو الأصل.`,
+      productTypes: ['avatar-studio', 'full-body'],
+      duration: '45s',
+      isActive: true,
+    },
+    {
+      name: 'Wedding Congratulations',
+      nameAr: 'تهنئة الزواج',
+      description: 'A romantic and memorable wedding congratulations from a celebrity for the happy couple.',
+      descriptionAr: 'تهنئة زواج رومانسية ولا تُنسى من نجم مشهور للزوجين السعيدين.',
+      purpose: 'Wedding',
+      purposeAr: 'تهنئة الزواج',
+      sampleScript: `[Groom] and [Bride], congratulations on your wedding day! Today you're not just starting a new chapter — you're beginning the greatest adventure of your lives together. Love each other deeply, laugh often, and face every challenge as a team. Wishing you a lifetime of happiness, joy, and beautiful memories. You make a truly wonderful couple!`,
+      sampleScriptAr: `[اسم العريس] و[اسم العروس]، مبروك يوم زفافكم! اليوم أنتم لا تبدأون فصلاً جديداً فحسب — بل تبدأون أعظم مغامرة في حياتكم معاً. أحبا بعضكما بعمق، واضحكا كثيراً، وواجها كل تحدٍ كفريق واحد. أتمنى لكم حياة مليئة بالسعادة والبهجة والذكريات الجميلة. أنتما زوجان رائعان حقاً!`,
+      productTypes: ['greeting'],
+      duration: '45s',
+      isActive: true,
+    },
+    {
+      name: 'Business Opening & Grand Launch',
+      nameAr: 'افتتاح عمل تجاري',
+      description: 'An exciting grand opening message for a new business, store, or restaurant.',
+      descriptionAr: 'رسالة افتتاح رائعة لعمل تجاري أو متجر أو مطعم جديد.',
+      purpose: 'Business Intro',
+      purposeAr: 'تقديم عمل تجاري',
+      sampleScript: `Something exciting is happening — [Business Name] is officially open! I've seen what the team behind this has built and I'm telling you, it's something special. Whether you're looking for [product/service], this is the place to be. Come check it out, support [Name] and what they've worked so hard to create. Congratulations on the grand opening — this is just the beginning!`,
+      sampleScriptAr: `شيء مثير للاهتمام يحدث — [اسم العمل التجاري] افتتح رسمياً! رأيت ما بناه الفريق وراء هذا وأقول لكم إنه شيء مميز. سواء كنت تبحث عن [المنتج/الخدمة]، هذا هو المكان المناسب. تعالوا وتفقدوا وادعموا [الاسم] وما عمل بجد لإنشائه. مبروك على الافتتاح الرسمي — هذه مجرد البداية!`,
+      productTypes: ['avatar-studio', 'full-body'],
+      duration: '60s',
+      isActive: true,
+    },
+    {
+      name: 'Thank You Message',
+      nameAr: 'رسالة شكر',
+      description: 'A sincere thank-you message to express gratitude to a person, team, or community.',
+      descriptionAr: 'رسالة شكر صادقة للتعبير عن الامتنان لشخص أو فريق أو مجتمع.',
+      purpose: 'Thank You',
+      purposeAr: 'رسالة شكر',
+      sampleScript: `[Name], I want you to know how much your support means to me — and to all of us. People like you are the reason we keep pushing. The loyalty, the energy, the love you bring — it never goes unnoticed. From the bottom of my heart, thank you. This one's for you.`,
+      sampleScriptAr: `[الاسم]، أريدك أن تعلم مدى أهمية دعمك لي — ولنا جميعاً. أشخاص مثلك هم السبب الذي يجعلنا نستمر. الولاء والطاقة والمحبة التي تجلبها — لا تمر دون أن نلاحظها أبداً. من أعماق قلبي، شكراً لك. هذه لك.`,
+      productTypes: ['greeting'],
+      duration: '30s',
+      isActive: true,
+    },
+    {
+      name: 'Sports Team Shoutout',
+      nameAr: 'تشجيع فريق رياضي',
+      description: 'A high-energy shoutout to a sports team, club, or athlete to fire them up for a big match.',
+      descriptionAr: 'تشجيع بطاقة عالية لفريق رياضي أو نادٍ أو رياضي استعداداً لمباراة كبيرة.',
+      purpose: 'Shoutout',
+      purposeAr: 'تشجيع رياضي',
+      sampleScript: `[Team Name] — I'm talking to you. You've trained for this. You've sacrificed for this. Every early morning, every tough session, every moment of doubt — it all led to right now. Go out there and show the world what you're made of. Believe in each other. Fight for every second. Let's go — you've got this!`,
+      sampleScriptAr: `[اسم الفريق] — أتحدث إليكم. لقد تدربتم من أجل هذا. ضحيتم من أجل هذا. كل صباح مبكر، كل جلسة صعبة، كل لحظة شك — كل ذلك قاد إلى هذه اللحظة. اخرجوا وأروا العالم ما أنتم عليه. ثقوا ببعضكم. قاتلوا في كل ثانية. هيا — أنتم قادرون!`,
+      productTypes: ['greeting', 'avatar-studio'],
+      duration: '30s',
+      isActive: true,
+    },
+    {
+      name: 'Graduation Celebration',
+      nameAr: 'احتفال بالتخرج',
+      description: 'A proud and inspiring graduation congratulations message for students and their families.',
+      descriptionAr: 'رسالة تهنئة تخرج فخورة وملهمة للطلاب وعائلاتهم.',
+      purpose: 'Graduation',
+      purposeAr: 'تهنئة التخرج',
+      sampleScript: `[Name], you did it! Graduation day is here and I couldn't be more proud of you. All those late nights studying, all those moments of pressure — they shaped you into the person standing here today. This degree is yours. The future is yours. Go out there and change the world — it's waiting for you.`,
+      sampleScriptAr: `[الاسم]، أنجزت المهمة! يوم التخرج وصل ولا يمكنني أن أكون أكثر فخراً بك. كل تلك الليالي المتأخرة في الدراسة، كل لحظات الضغط — شكّلتك لتصبح الشخص الواقف هنا اليوم. هذه الشهادة لك. المستقبل لك. اذهب وغيّر العالم — إنه ينتظرك.`,
+      productTypes: ['greeting'],
+      duration: '30s',
+      isActive: true,
+    },
+    {
+      name: 'Corporate Event & Conference Invite',
+      nameAr: 'دعوة فعالية أو مؤتمر',
+      description: 'A professional celebrity-led invite to drive attendance at corporate events and conferences.',
+      descriptionAr: 'دعوة احترافية بقيادة نجم مشهور لزيادة الحضور في الفعاليات والمؤتمرات.',
+      purpose: 'Business Intro',
+      purposeAr: 'دعوة فعالية',
+      sampleScript: `I want to personally invite you to [Event Name], happening on [Date] in [Location]. This isn't just another event — it's where the biggest names in [industry] come together to share ideas, make connections, and shape the future. Don't miss your chance to be part of something historic. Register now at [Website] — I'll see you there.`,
+      sampleScriptAr: `أريد أن أدعوك شخصياً إلى [اسم الفعالية]، التي تقام في [التاريخ] في [الموقع]. هذه ليست مجرد فعالية عادية — إنها المكان الذي تجتمع فيه أكبر الأسماء في [القطاع] لتبادل الأفكار وبناء العلاقات وتشكيل المستقبل. لا تفوّت فرصتك للمشاركة في شيء تاريخي. سجّل الآن على [الموقع] — سأراك هناك.`,
+      productTypes: ['avatar-studio', 'full-body'],
+      duration: '60s',
+      isActive: true,
+    },
+    {
+      name: 'New Year Message',
+      nameAr: 'رسالة رأس السنة',
+      description: 'An inspirational new year message to reflect on the past and embrace the year ahead.',
+      descriptionAr: 'رسالة ملهمة لرأس السنة للتأمل في الماضي واحتضان العام القادم.',
+      purpose: 'Holiday Greeting',
+      purposeAr: 'تهنئة رأس السنة',
+      sampleScript: `Happy New Year! A brand new year means a brand new chapter — and this one is yours to write. Leave behind whatever held you back, carry forward everything that made you strong, and step into this year with confidence and courage. Make it count. Happy New Year — let's make this one unforgettable.`,
+      sampleScriptAr: `كل عام وأنتم بخير! عام جديد يعني فصلاً جديداً — وهذا الفصل لك لتكتبه. اترك خلفك ما أعاقك، واحمل معك كل ما جعلك أقوى، وادخل هذا العام بثقة وشجاعة. اجعله مميزاً. كل عام وأنتم بخير — لنجعل هذا العام لا يُنسى.`,
+      productTypes: ['greeting', 'avatar-studio'],
+      duration: '30s',
+      isActive: true,
+    },
+  ]
+
+  for (const t of TEMPLATES) {
+    const existing = await Template.findOne({ name: t.name })
+    if (existing) {
+      console.log(`[skip] Template already exists: ${t.name}`)
+    } else {
+      await Template.create(t)
+      console.log(`[ok]   Template created: ${t.name}`)
+    }
   }
 
   console.log('\nSeeding complete.')

@@ -169,6 +169,52 @@ export async function adminUpdateJobStatus(req: Request, res: Response, next: Ne
   }
 }
 
+// Admin — CS approves a job in 'review' status → delivered + notify customer
+export async function adminApproveJob(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const job = await VideoJob.findById(req.params.id)
+    if (!job) throw new AppError('Job not found', 404)
+    if (job.status !== 'review') throw new AppError('Job must be in review status to approve', 400)
+
+    job.status = 'delivered'
+    job.downloadEnabled = true
+    job.deliveredAt = new Date()
+    job.statusHistory.push({ status: 'delivered', timestamp: new Date(), note: 'Approved by CS team' })
+    await job.save()
+
+    User.findById(job.userId).then(user => {
+      if (user) emailService.sendJobStatusUpdate(user.email, user.name, 'delivered', job.referenceId).catch(() => null)
+    }).catch(() => null)
+
+    res.json({ success: true, data: job, message: 'Job approved and delivered to customer' })
+  } catch (err) {
+    next(err)
+  }
+}
+
+// Admin — CS rejects a job in 'review' status → failed
+export async function adminRejectJob(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { note } = req.body as { note?: string }
+    const job = await VideoJob.findById(req.params.id)
+    if (!job) throw new AppError('Job not found', 404)
+    if (job.status !== 'review') throw new AppError('Job must be in review status to reject', 400)
+
+    job.status = 'failed'
+    job.errorMessage = note || 'Rejected by CS team'
+    job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
+    await job.save()
+
+    User.findById(job.userId).then(user => {
+      if (user) emailService.sendJobStatusUpdate(user.email, user.name, 'failed', job.referenceId).catch(() => null)
+    }).catch(() => null)
+
+    res.json({ success: true, data: job, message: 'Job rejected' })
+  } catch (err) {
+    next(err)
+  }
+}
+
 // Admin — enable download
 export async function adminEnableDownload(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {

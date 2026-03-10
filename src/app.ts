@@ -15,6 +15,7 @@ import adminRoutes      from './routes/admin.routes'
 import roleRoutes       from './routes/role.routes'
 import teamRoutes       from './routes/team.routes'
 import templateRoutes   from './routes/template.routes'
+import webhookRoutes    from './routes/webhook.routes'
 
 const app = express()
 
@@ -33,6 +34,9 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }))
+
+// ── Webhooks (before rate-limit — server-to-server callbacks) ─────────────
+app.use('/api/webhooks', webhookRoutes)
 
 // ── Rate limiting ─────────────────────────────────────────
 app.use('/api/', rateLimit({

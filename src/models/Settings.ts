@@ -8,12 +8,15 @@ export interface ISettings extends Document {
   elevenLabsKey: string
   syncLabsKey: string
   higgsfieldKey: string
+  higgsfieldSecret: string
+  higgsfieldWebhookSecret: string
   watermarkText: string
   watermarkOpacity: string
   watermarkPosition: string
+  awsAccessKeyId: string
+  awsSecretAccessKey: string
   awsRegion: string
-  s3VideosBucket: string
-  s3AssetsBucket: string
+  s3Bucket: string
 }
 
 const SettingsSchema = new Schema<ISettings>(
@@ -24,13 +27,16 @@ const SettingsSchema = new Schema<ISettings>(
     adminEmail:        { type: String, default: 'admin@twinity.ai' },
     elevenLabsKey:     { type: String, default: '' },
     syncLabsKey:       { type: String, default: '' },
-    higgsfieldKey:     { type: String, default: '' },
+    higgsfieldKey:            { type: String, default: '' },
+    higgsfieldSecret:         { type: String, default: '' },
+    higgsfieldWebhookSecret:  { type: String, default: '' },
     watermarkText:     { type: String, default: 'twinity.ai · PREVIEW' },
     watermarkOpacity:  { type: String, default: '0.35' },
     watermarkPosition: { type: String, default: 'Bottom Center' },
-    awsRegion:         { type: String, default: 'us-east-1' },
-    s3VideosBucket:    { type: String, default: 'twinity-videos' },
-    s3AssetsBucket:    { type: String, default: 'twinity-assets' },
+    awsAccessKeyId:     { type: String, default: '' },
+    awsSecretAccessKey: { type: String, default: '' },
+    awsRegion:          { type: String, default: 'us-east-1' },
+    s3Bucket:           { type: String, default: 'twinity-storage' },
   },
   { timestamps: true }
 )
@@ -47,9 +53,12 @@ function maskKey(val: string): string {
 
 SettingsSchema.methods.toPublicJSON = function () {
   const obj = this.toObject()
-  if (obj.elevenLabsKey) obj.elevenLabsKey = maskKey(obj.elevenLabsKey)
-  if (obj.syncLabsKey)   obj.syncLabsKey   = maskKey(obj.syncLabsKey)
-  if (obj.higgsfieldKey) obj.higgsfieldKey = maskKey(obj.higgsfieldKey)
+  if (obj.elevenLabsKey)    obj.elevenLabsKey    = maskKey(obj.elevenLabsKey)
+  if (obj.syncLabsKey)      obj.syncLabsKey      = maskKey(obj.syncLabsKey)
+  if (obj.higgsfieldKey)           obj.higgsfieldKey           = maskKey(obj.higgsfieldKey)
+  if (obj.higgsfieldSecret)        obj.higgsfieldSecret        = maskKey(obj.higgsfieldSecret)
+  if (obj.higgsfieldWebhookSecret) obj.higgsfieldWebhookSecret = maskKey(obj.higgsfieldWebhookSecret)
+  if (obj.awsSecretAccessKey)      obj.awsSecretAccessKey      = maskKey(obj.awsSecretAccessKey)
   return obj
 }
 

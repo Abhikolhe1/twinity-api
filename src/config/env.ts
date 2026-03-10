@@ -38,7 +38,9 @@ export const env = {
   externalApis: {
     elevenLabs: process.env.ELEVENLABS_API_KEY || '',
     syncLabs: process.env.SYNCLABS_API_KEY || '',
-    higgsfield: process.env.HIGGSFIELD_API_KEY || '',
+    higgsfield:              process.env.HIGGSFIELD_API_KEY        || '',
+    higgsfieldSecret:        process.env.HIGGSFIELD_API_SECRET     || '',
+    higgsfieldWebhookSecret: process.env.HIGGSFIELD_WEBHOOK_SECRET || '',
   },
   cors: {
     clientUrl: process.env.CLIENT_URL || 'http://localhost:3000',

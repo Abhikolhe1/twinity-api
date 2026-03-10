@@ -12,16 +12,22 @@
     "seed": "ts-node-dev --transpile-only src/seeders/seed.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1005.0",
+    "@aws-sdk/s3-request-presigner": "^3.1005.0",
+    "@types/form-data": "^2.5.2",
+    "@types/multer": "^2.1.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.3.1",
     "express-validator": "^7.1.0",
+    "form-data": "^4.0.5",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.4.3",
     "morgan": "^1.10.0",
+    "multer": "^2.1.1",
     "nodemailer": "^6.9.14",
     "uuid": "^10.0.0",
     "winston": "^3.13.0"
@@ -32,8 +38,8 @@
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/morgan": "^1.9.9",
-    "@types/nodemailer": "^6.4.15",
     "@types/node": "^20.14.9",
+    "@types/nodemailer": "^6.4.15",
     "@types/uuid": "^10.0.0",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.5.2"

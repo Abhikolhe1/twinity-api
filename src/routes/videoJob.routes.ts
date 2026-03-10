@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { createJob, getMyJobs, getJob, submitBookCall, adminListJobs, adminUpdateJobStatus, adminEnableDownload } from '../controllers/videoJob.controller'
+import { createJob, getMyJobs, getJob, submitBookCall, adminListJobs, adminUpdateJobStatus, adminEnableDownload, adminApproveJob, adminRejectJob } from '../controllers/videoJob.controller'
 import { requireAuth } from '../middleware/auth'
 import { requireAdmin, requirePermission } from '../middleware/adminAuth'
 
@@ -14,6 +14,8 @@ router.post('/my/:referenceId/book-call', requireAuth, submitBookCall)
 // Admin routes
 router.get('/admin', requireAdmin, adminListJobs)
 router.patch('/admin/:id/status', requireAdmin, requirePermission('videos.manage'), adminUpdateJobStatus)
+router.post('/admin/:id/approve', requireAdmin, requirePermission('videos.manage'), adminApproveJob)
+router.post('/admin/:id/reject', requireAdmin, requirePermission('videos.manage'), adminRejectJob)
 router.patch('/admin/:id/enable-download', requireAdmin, requirePermission('videos.manage'), adminEnableDownload)
 
 export default router

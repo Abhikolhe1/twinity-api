@@ -16,6 +16,8 @@ export const ALL_PERMISSIONS = [
   'team.manage',
   'roles.view',
   'roles.manage',
+  'templates.view',
+  'templates.manage',
 ] as const
 
 export type Permission = typeof ALL_PERMISSIONS[number]
