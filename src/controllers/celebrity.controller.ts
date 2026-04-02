@@ -27,8 +27,9 @@ async function resolveThumbnailUrl(thumbnailUrl: string | undefined, slug: strin
   return result.url
 }
 
-async function signDoc(doc: Record<string, unknown>): Promise<Record<string, unknown>> {
-  return { ...doc, thumbnailUrl: await s3Service.presignIfS3(doc.thumbnailUrl as string | undefined) }
+async function signDoc(doc: object): Promise<Record<string, unknown>> {
+  const plain = doc as Record<string, unknown>
+  return { ...plain, thumbnailUrl: await s3Service.presignIfS3(plain.thumbnailUrl as string | undefined) }
 }
 
 export async function listCelebrities(req: Request, res: Response, next: NextFunction): Promise<void> {
