@@ -78,6 +78,7 @@ async function processJob(jobId: string): Promise<void> {
       heygenPhotoId: celeb.heygenPhotoId,
       aspectRatio:   job.aspectRatio,
       referenceId:   job.referenceId,
+      script:        job.script,
     })
 
     job.aiJobId = render.requestId
@@ -129,7 +130,7 @@ async function processJob(jobId: string): Promise<void> {
 export const queueService = {
   async dispatchVideoJob(jobId: string): Promise<void> {
     logger.info(`[Queue] Dispatching video job: ${jobId}`)
-    setTimeout(() => processJob(jobId).catch(err => logger.error('[Queue] processJob error:', err)), 3_000)
+    await processJob(jobId)
   },
 
   /**
@@ -157,6 +158,7 @@ export const queueService = {
         photoId:     groupId,
         aspectRatio: job.aspectRatio,
         referenceId: job.referenceId,
+        script:      job.script,
       })
 
       if (result.stale) {

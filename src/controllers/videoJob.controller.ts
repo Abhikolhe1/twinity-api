@@ -57,7 +57,7 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
     await Celebrity.findByIdAndUpdate(celebrityId, { $inc: { totalOrders: 1 } })
 
     // Dispatch to queue (non-blocking)
-    queueService.dispatchVideoJob(String(job._id)).catch(() => null)
+    await queueService.dispatchVideoJob(String(job._id))
 
     res.status(201).json({ success: true, data: job })
   } catch (err) {

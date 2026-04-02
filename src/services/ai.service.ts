@@ -239,6 +239,7 @@ export const aiService = {
     heygenPhotoId?: string
     aspectRatio: string
     referenceId: string
+    script: string
   }): Promise<HeyGenResult> {
     logger.info(`[AI] HeyGen lip-sync: refId=${params.referenceId}`)
     const { heygenKey } = await settingsService.get()
@@ -311,6 +312,7 @@ export const aiService = {
       photoId:     params.heygenPhotoId,
       aspectRatio: params.aspectRatio,
       referenceId: params.referenceId,
+      script:      params.script,
       heygenKey,
     })
 
@@ -335,16 +337,21 @@ export const aiService = {
     photoId: string
     aspectRatio: string
     referenceId: string
+    script: string
     heygenKey?: string
   }): Promise<{ videoId: string; stale: boolean }> {
     const heygenKey = params.heygenKey ?? (await settingsService.get()).heygenKey
     if (!heygenKey) throw new Error('HeyGen API key not configured')
+
+    logger.info(`[AI] HeyGen submitVideo: refId=${params.referenceId}, photoId=${params.photoId}, script="${params.script.slice(0, 80)}..."`)
 
     const dimension = heygenDimension(params.aspectRatio)
     const videoRes = await fetch(`${HEYGEN_BASE}/v2/video/generate`, {
       method: 'POST',
       headers: { 'X-Api-Key': heygenKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        title: params.script.slice(0, 200),
+        caption: false,
         video_inputs: [{
           character: { type: 'talking_photo', talking_photo_id: params.photoId },
           voice:     { type: 'audio', audio_url: params.audioUrl },

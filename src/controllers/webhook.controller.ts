@@ -59,9 +59,7 @@ export async function heygenWebhook(req: Request, res: Response): Promise<void> 
       }
       if (event_type === 'avatar_training.success') {
         logger.info(`[Webhook] HeyGen avatar training complete for group_id=${groupId}, job=${trainingJob.referenceId} — triggering video generation`)
-        queueService.triggerVideoGeneration(String(trainingJob._id)).catch(err =>
-          logger.error(`[Webhook] triggerVideoGeneration error for job ${trainingJob.referenceId}:`, err)
-        )
+        await queueService.triggerVideoGeneration(String(trainingJob._id))
       } else {
         const errMsg = event_data.error_msg ?? event_data.error ?? 'Avatar training failed'
         trainingJob.status = 'failed'
