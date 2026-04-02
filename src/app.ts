@@ -35,6 +35,10 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }))
 
+// ── Body parsing ──────────────────────────────────────────
+app.use(express.json({ limit: '10mb' }))
+app.use(express.urlencoded({ extended: true }))
+
 // ── Webhooks (before rate-limit — server-to-server callbacks) ─────────────
 app.use('/api/webhooks', webhookRoutes)
 
@@ -44,10 +48,6 @@ app.use('/api/', rateLimit({
   max: env.rateLimit.max,
   message: { success: false, message: 'Too many requests, please try again later.' },
 }))
-
-// ── Body parsing ──────────────────────────────────────────
-app.use(express.json({ limit: '10mb' }))
-app.use(express.urlencoded({ extended: true }))
 
 // ── Logging ───────────────────────────────────────────────
 app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'))

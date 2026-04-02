@@ -3,9 +3,9 @@ import { heygenWebhook } from '../controllers/webhook.controller'
 
 const router = Router()
 
-// POST /api/webhooks/heygen
-// Called by HeyGen when a Talking Photo video generation job completes or fails.
-// No admin auth — this is a server-to-server callback from HeyGen.
+// GET  /api/webhooks/heygen — HeyGen pings this to verify the URL is reachable
+// POST /api/webhooks/heygen — HeyGen sends event payloads here
+router.get('/heygen',  (_req, res) => res.json({ success: true, service: 'twinity-heygen-webhook' }))
 router.post('/heygen', heygenWebhook)
 
 export default router
