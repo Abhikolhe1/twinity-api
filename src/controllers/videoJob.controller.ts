@@ -7,6 +7,7 @@ import { AppError } from '../middleware/errorHandler'
 import { queueService } from '../services/queue.service'
 import { emailService } from '../services/email.service'
 import { s3Service } from '../services/s3.service'
+import { aiService } from '../services/ai.service'
 import { AuthRequest } from '../middleware/auth'
 
 async function signJobThumbnail(job: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -223,6 +224,23 @@ export async function adminRejectJob(req: Request, res: Response, next: NextFunc
     }).catch(() => null)
 
     res.json({ success: true, data: job, message: 'Job rejected' })
+  } catch (err) {
+    next(err)
+  }
+}
+
+// Authenticated — improve script with AI
+export async function improveScript(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { script, celebrityName, productType, purpose } = req.body as {
+      script: string; celebrityName: string; productType: string; purpose?: string
+    }
+    if (!script?.trim()) throw new AppError('script is required', 400)
+    if (!celebrityName?.trim()) throw new AppError('celebrityName is required', 400)
+    if (!productType?.trim()) throw new AppError('productType is required', 400)
+
+    const improved = await aiService.improveScript({ script, celebrityName, productType, purpose })
+    res.json({ success: true, improvedScript: improved })
   } catch (err) {
     next(err)
   }

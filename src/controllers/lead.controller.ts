@@ -5,7 +5,19 @@ import { AppError } from '../middleware/errorHandler'
 // Public — contact form submission
 export async function submitContactForm(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const lead = await Lead.create({ ...req.body, source: 'contact-form', statusHistory: [{ status: 'new', timestamp: new Date() }] })
+    const { name, email, phone, company, message, notes, productType, purpose, celebrityName } = req.body as Record<string, string>
+    const lead = await Lead.create({
+      name,
+      email,
+      phone,
+      company,
+      notes:         notes || message || '',
+      productType:   productType   || 'contact-form',
+      purpose:       purpose       || 'General Inquiry',
+      celebrityName: celebrityName || 'N/A',
+      source: 'contact-form',
+      statusHistory: [{ status: 'new', timestamp: new Date() }],
+    })
     res.status(201).json({ success: true, message: 'Inquiry submitted successfully', data: { id: lead._id } })
   } catch (err) {
     next(err)

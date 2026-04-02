@@ -12,7 +12,7 @@ function signToken(userId: string, email: string): string {
 
 export async function register(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { name, email, password, phone, company } = req.body
+    const { name, email, password, phone, company, accountType } = req.body
 
     const exists = await User.findOne({ email })
     if (exists) throw new AppError('Email already registered', 409)
@@ -20,6 +20,7 @@ export async function register(req: Request, res: Response, next: NextFunction):
     const verificationToken = uuidv4()
     const user = await User.create({
       name, email, password, phone, company,
+      accountType: accountType === 'celebrity' ? 'celebrity' : 'individual',
       authProvider: 'email',
       hasEmailPassword: true,
       emailVerificationToken: verificationToken,

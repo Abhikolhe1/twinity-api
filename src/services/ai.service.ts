@@ -68,6 +68,9 @@ async function generateVoicePreview(voiceId: string, language: string, apiKey: s
   }
 }
 
+// ─── OpenAI API ───────────────────────────────────────────────────────────────
+const OPENAI_BASE = 'https://api.openai.com'
+
 // ─── Exported service ─────────────────────────────────────────────────────────
 
 export const aiService = {
@@ -375,5 +378,54 @@ export const aiService = {
     if (videoData.error) throw new Error(`HeyGen video generate error: ${errMsg}`)
 
     return { videoId: videoData.data!.video_id, stale: false }
+  },
+
+  /**
+   * Claude API — improves a celebrity video script using AI.
+   * Falls back to returning the original script when the key is not set.
+   */
+  async improveScript(params: {
+    script: string
+    celebrityName: string
+    productType: string
+    purpose?: string
+  }): Promise<string> {
+    const { openaiKey } = await settingsService.get()
+    if (!openaiKey) {
+      logger.warn('[AI] OpenAI key not set — returning original script')
+      return params.script
+    }
+
+    const systemPrompt = 'You are a professional copywriter specialising in celebrity video advertisements. Improve scripts to be more engaging, natural, and persuasive while preserving the core message. Return ONLY the improved script text with no preamble, explanation, or formatting marks.'
+    const userPrompt = `Celebrity: ${params.celebrityName}\nProduct type: ${params.productType}${params.purpose ? `\nPurpose: ${params.purpose}` : ''}\n\nScript to improve:\n${params.script}`
+
+    logger.info(`[AI] Improving script via OpenAI for celebrity=${params.celebrityName}`)
+    const res = await fetch(`${OPENAI_BASE}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        max_tokens: 1024,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user',   content: userPrompt },
+        ],
+      }),
+    })
+
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`OpenAI API error (${res.status}): ${err}`)
+    }
+
+    const data = await res.json() as { choices?: Array<{ message: { content: string } }> }
+    const improved = data.choices?.[0]?.message?.content?.trim()
+    if (!improved) throw new Error('OpenAI returned empty response')
+
+    logger.info('[AI] Script improved successfully')
+    return improved
   },
 }

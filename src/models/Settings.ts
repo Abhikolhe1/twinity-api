@@ -7,6 +7,7 @@ export interface ISettings extends Document {
   adminEmail: string
   elevenLabsKey: string
   heygenKey: string
+  openaiKey: string
   watermarkText: string
   watermarkOpacity: string
   watermarkPosition: string
@@ -24,6 +25,7 @@ const SettingsSchema = new Schema<ISettings>(
     adminEmail:        { type: String, default: 'admin@twinity.ai' },
     elevenLabsKey: { type: String, default: '' },
     heygenKey:     { type: String, default: '' },
+    openaiKey:     { type: String, default: '' },
     watermarkText:     { type: String, default: 'twinity.ai · PREVIEW' },
     watermarkOpacity:  { type: String, default: '0.35' },
     watermarkPosition: { type: String, default: 'Bottom Center' },
@@ -49,6 +51,7 @@ SettingsSchema.methods.toPublicJSON = function () {
   const obj = this.toObject()
   if (obj.elevenLabsKey)      obj.elevenLabsKey      = maskKey(obj.elevenLabsKey)
   if (obj.heygenKey)          obj.heygenKey          = maskKey(obj.heygenKey)
+  if (obj.openaiKey)          obj.openaiKey          = maskKey(obj.openaiKey)
   if (obj.awsSecretAccessKey) obj.awsSecretAccessKey = maskKey(obj.awsSecretAccessKey)
   return obj
 }

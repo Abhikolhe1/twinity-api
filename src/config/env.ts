@@ -36,8 +36,9 @@ export const env = {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
   },
   externalApis: {
-    elevenLabs: process.env.ELEVENLABS_API_KEY || '',
-    heygen:     process.env.HEYGEN_API_KEY     || '',
+    elevenLabs:  process.env.ELEVENLABS_API_KEY  || '',
+    heygen:      process.env.HEYGEN_API_KEY      || '',
+    openai:      process.env.OPENAI_API_KEY        || '',
   },
   cors: {
     clientUrl: process.env.CLIENT_URL || 'http://localhost:3000',
