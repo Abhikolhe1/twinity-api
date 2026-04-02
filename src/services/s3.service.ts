@@ -4,7 +4,8 @@
  * Falls back to env vars if not configured in DB.
  * Stubs when no credentials are available.
  */
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { settingsService } from './settings.service'
 import { logger } from '../config/logger'
 
@@ -56,18 +57,42 @@ export const s3Service = {
 
     const { client, region } = result
 
-    await client.send(
-      new PutObjectCommand({
-        Bucket:      bucket,
-        Key:         key,
-        Body:        buffer,
-        ContentType: mimeType,
-      }),
-    )
+    await client.send(new PutObjectCommand({
+      Bucket:      bucket,
+      Key:         key,
+      Body:        buffer,
+      ContentType: mimeType,
+    }))
 
     const url = `https://${bucket}.s3.${region}.amazonaws.com/${key}`
     logger.info(`[S3] Uploaded: ${url}`)
     return { url, key, stub: false }
+  },
+
+  /**
+   * Generate a pre-signed URL for a private S3 object.
+   * Use this when an external service (e.g. HeyGen) needs to download a private file.
+   * @param expiresIn  Seconds until the URL expires (default: 3600 = 1 hour)
+   */
+  async getPresignedUrl(bucket: string, key: string, expiresIn = 3600): Promise<string> {
+    const result = await buildClient()
+    if (!result) return `https://stub-s3/${bucket}/${key}`
+    const { client } = result
+    const url = await getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), { expiresIn })
+    logger.info(`[S3] Pre-signed URL generated for key=${key} (expires in ${expiresIn}s)`)
+    return url
+  },
+
+  /**
+   * If the URL is an S3 URL (https://bucket.s3.region.amazonaws.com/key),
+   * return a pre-signed version. Non-S3 URLs (external, seed data, empty) are
+   * returned unchanged so callers don't need to check.
+   */
+  async presignIfS3(url: string | undefined, expiresIn = 3600): Promise<string | undefined> {
+    if (!url) return url
+    const match = url.match(/^https:\/\/([^.]+)\.s3\.[^.]+\.amazonaws\.com\/(.+)$/)
+    if (!match) return url
+    return this.getPresignedUrl(match[1], match[2], expiresIn)
   },
 
   /**

@@ -1,158 +1,131 @@
 /**
- * Webhook Controller — handles inbound callbacks from Higgsfield AI.
+ * Webhook Controller — handles inbound callbacks from HeyGen.
  *
- * Higgsfield sends a POST to /api/webhooks/higgsfield when a job completes or fails.
- *
- * Security: we verify the X-Higgsfield-Secret header against the stored webhook secret.
- * If no secret is configured, the endpoint is open (acceptable for initial testing).
+ * HeyGen sends a POST to /api/webhooks/heygen for both avatar training
+ * and video generation events. Register this URL in the HeyGen dashboard.
+ * HeyGen does not sign webhook payloads; security relies on the URL
+ * being private/unguessable in production.
  *
  * Supported events:
- *   - Avatar training completed  → update Celebrity.avatarModelId + avatarStatus: 'ready'
- *   - Avatar training failed     → update Celebrity.avatarStatus: 'failed'
- *   - Video render completed     → run SyncLabs lip sync if voiceAudioUrl set, then status: 'review'
- *   - Video render failed        → update VideoJob status: 'failed'
+ *   - avatar_training.success — avatar group ready; trigger video generation
+ *   - avatar_training.fail    — mark job failed
+ *   - avatar_video.success    — update job URLs, advance status to 'review'
+ *   - avatar_video.fail       — update job status to 'failed', notify customer
  */
 import { Request, Response } from 'express'
-import { Celebrity } from '../models/Celebrity'
 import { VideoJob } from '../models/VideoJob'
 import { User } from '../models/User'
 import { settingsService } from '../services/settings.service'
-import { aiService } from '../services/ai.service'
 import { emailService } from '../services/email.service'
+import { queueService } from '../services/queue.service'
 import { logger } from '../config/logger'
 
-// Higgsfield webhook payload format (https://docs.higgsfield.ai/how-to/webhooks)
-interface HiggsfieldWebhookPayload {
-  request_id?: string
-  id?: string
-  status_url?: string
-  cancel_url?: string
-  // status values: 'queued' | 'in_progress' | 'completed' | 'failed' | 'nsfw'
-  status?: string
-  output?: { character_id?: string; id?: string }
-  // For video completion
-  video?: { url: string }
-  // For image completion
-  images?: Array<{ url: string }>
-  error?: string
+interface HeyGenWebhookPayload {
+  event_type: string
+  event_data: {
+    video_id?: string
+    group_id?: string
+    url?: string
+    thumbnail_url?: string
+    gif_url?: string
+    callback_id?: string
+    duration?: number
+    error?: string
+    error_msg?: string
+  }
 }
 
-export async function higgsfieldWebhook(req: Request, res: Response): Promise<void> {
+export async function heygenWebhook(req: Request, res: Response): Promise<void> {
   try {
-    // Verify webhook secret if configured
-    const { higgsfieldWebhookSecret } = await settingsService.get()
-    if (higgsfieldWebhookSecret) {
-      const incoming = req.headers['x-higgsfield-secret'] as string | undefined
-      if (!incoming || incoming !== higgsfieldWebhookSecret) {
-        logger.warn('[Webhook] Higgsfield secret mismatch — rejecting request')
-        res.status(401).json({ success: false, message: 'Invalid webhook secret' })
+    const payload = req.body as HeyGenWebhookPayload
+    const { event_type, event_data } = payload
+    const videoId = event_data?.video_id
+
+    logger.info(`[Webhook] HeyGen event — event_type=${event_type}, video_id=${videoId}, group_id=${event_data?.group_id}`)
+
+    // ── Avatar training events ────────────────────────────────────────────────
+    if (event_type === 'avatar_training.success' || event_type === 'avatar_training.fail') {
+      const groupId = event_data?.group_id
+      if (!groupId) {
+        logger.warn('[Webhook] HeyGen avatar_training event missing group_id')
+        res.json({ success: true })
         return
       }
-    }
-
-    const payload = req.body as HiggsfieldWebhookPayload
-    const requestId = payload.request_id ?? payload.id
-
-    if (!requestId) {
-      res.status(400).json({ success: false, message: 'Missing request_id' })
-      return
-    }
-
-    const status  = payload.status ?? 'unknown'
-    const failed  = status === 'failed' || status === 'nsfw'
-    const success = status === 'completed'
-
-    logger.info(`[Webhook] Higgsfield event — requestId=${requestId}, status=${status}`)
-
-    // ── Try to match as avatar training job ──────────────────────────────
-    const celeb = await Celebrity.findOne({ avatarTrainingRequestId: requestId })
-    if (celeb) {
-      if (success) {
-        const characterId = String(
-          payload.output?.character_id ??
-          payload.output?.id ??
-          requestId
+      const trainingJob = await VideoJob.findOne({ aiJobId: groupId, status: 'in-progress' })
+      if (!trainingJob) {
+        logger.warn(`[Webhook] HeyGen: no in-progress job found for group_id=${groupId}`)
+        res.json({ success: true })
+        return
+      }
+      if (event_type === 'avatar_training.success') {
+        logger.info(`[Webhook] HeyGen avatar training complete for group_id=${groupId}, job=${trainingJob.referenceId} — triggering video generation`)
+        queueService.triggerVideoGeneration(String(trainingJob._id)).catch(err =>
+          logger.error(`[Webhook] triggerVideoGeneration error for job ${trainingJob.referenceId}:`, err)
         )
-        celeb.avatarModelId = characterId
-        celeb.avatarStatus  = 'ready'
-        logger.info(`[Webhook] Avatar training complete: celeb=${celeb.name}, characterId=${characterId}`)
-      } else if (failed) {
-        celeb.avatarStatus = 'failed'
-        logger.warn(`[Webhook] Avatar training failed: celeb=${celeb.name}, error=${payload.error}`)
+      } else {
+        const errMsg = event_data.error_msg ?? event_data.error ?? 'Avatar training failed'
+        trainingJob.status = 'failed'
+        trainingJob.errorMessage = errMsg
+        trainingJob.statusHistory.push({ status: 'failed', timestamp: new Date(), note: errMsg })
+        await trainingJob.save()
+        logger.warn(`[Webhook] HeyGen avatar training failed for job=${trainingJob.referenceId}: ${errMsg}`)
       }
-      await celeb.save()
-      res.json({ success: true, type: 'avatar', celebId: celeb._id })
+      res.json({ success: true })
       return
     }
 
-    // ── Try to match as video render job ─────────────────────────────────
-    const job = await VideoJob.findOne({ aiJobId: requestId })
-    if (job) {
-      if (success) {
-        // Higgsfield sends video.url for video completions
-        const rawVideoUrl = payload.video?.url ?? payload.images?.[0]?.url ?? ''
-        logger.info(`[Webhook] Video render complete: job=${job.referenceId}, url=${rawVideoUrl}`)
-
-        // ── SyncLabs lip sync ─────────────────────────────────────────────
-        // If we have a voice audio URL (pre-generated ElevenLabs or training audio),
-        // run it through SyncLabs to produce a lip-synced final video.
-        let finalVideoUrl = rawVideoUrl
-
-        if (job.voiceAudioUrl && rawVideoUrl) {
-          try {
-            logger.info(`[Webhook] Starting SyncLabs lip sync for job=${job.referenceId}`)
-            const lipSync = await aiService.lipSync(rawVideoUrl, job.voiceAudioUrl)
-            job.lipSyncJobId = lipSync.jobId
-            finalVideoUrl    = lipSync.videoUrl
-            logger.info(`[Webhook] SyncLabs lip sync complete: job=${job.referenceId}, videoUrl=${finalVideoUrl}`)
-          } catch (lipSyncErr: any) {
-            logger.warn(`[Webhook] SyncLabs lip sync failed for job=${job.referenceId}: ${lipSyncErr?.message} — using raw Higgsfield video`)
-            // Fall back to raw Higgsfield video if SyncLabs fails
-          }
-        }
-
-        job.finalVideoUrl  = finalVideoUrl
-        job.watermarkedUrl = rawVideoUrl    // watermarked/preview = raw Higgsfield (before lip sync)
-        job.previewUrl     = rawVideoUrl
-        job.status         = 'review'
-        job.statusHistory.push({
-          status: 'review',
-          timestamp: new Date(),
-          note: job.voiceAudioUrl
-            ? 'AI render + lip sync complete — pending CS approval'
-            : 'AI render complete — pending CS approval',
-        })
-        await job.save()
-
-        // Notify admin of new review item (non-blocking)
-        const { adminEmail } = await settingsService.get()
-        if (adminEmail) {
-          emailService.sendNewLeadNotification({ email: adminEmail } as any).catch(() => null)
-        }
-      } else if (failed) {
-        job.status       = 'failed'
-        job.errorMessage = payload.error ?? 'Higgsfield render failed'
-        job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
-        await job.save()
-        logger.warn(`[Webhook] Video render failed: job=${job.referenceId}`)
-
-        // Notify customer (non-blocking)
-        User.findById(job.userId).then(user => {
-          if (user) emailService.sendJobStatusUpdate(user.email, user.name, 'failed', job.referenceId).catch(() => null)
-        }).catch(() => null)
-      }
-
-      res.json({ success: true, type: 'video', jobId: job._id })
+    // ── Video generation events ───────────────────────────────────────────────
+    if (!videoId) {
+      logger.warn('[Webhook] HeyGen: missing video_id in payload')
+      res.status(400).json({ success: false, message: 'Missing video_id' })
       return
     }
 
-    // No match found
-    logger.warn(`[Webhook] No entity found for requestId=${requestId}`)
-    res.status(404).json({ success: false, message: `No job found for requestId: ${requestId}` })
+    const job = await VideoJob.findOne({ aiJobId: videoId })
+    if (!job) {
+      logger.warn(`[Webhook] HeyGen: no job found for video_id=${videoId}`)
+      res.status(404).json({ success: false, message: `No job found for video_id: ${videoId}` })
+      return
+    }
 
+    if (event_type === 'avatar_video.success') {
+      const videoUrl = event_data.url ?? ''
+      job.finalVideoUrl  = videoUrl
+      job.watermarkedUrl = videoUrl
+      job.previewUrl     = videoUrl
+      job.status         = 'review'
+      job.statusHistory.push({
+        status: 'review',
+        timestamp: new Date(),
+        note: 'HeyGen lip-sync complete — pending CS approval',
+      })
+      await job.save()
+      logger.info(`[Webhook] HeyGen video complete: job=${job.referenceId}, url=${videoUrl}`)
+
+      // Notify admin of new review item (non-blocking)
+      const { adminEmail } = await settingsService.get()
+      if (adminEmail) {
+        emailService.sendNewLeadNotification({ email: adminEmail } as any).catch(() => null)
+      }
+    } else if (event_type === 'avatar_video.fail') {
+      job.status       = 'failed'
+      job.errorMessage = event_data.error ?? 'HeyGen render failed'
+      job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
+      await job.save()
+      logger.warn(`[Webhook] HeyGen video failed: job=${job.referenceId}, error=${event_data.error}`)
+
+      // Notify customer (non-blocking)
+      User.findById(job.userId).then(user => {
+        if (user) emailService.sendJobStatusUpdate(user.email, user.name, 'failed', job.referenceId).catch(() => null)
+      }).catch(() => null)
+    } else {
+      logger.info(`[Webhook] HeyGen unhandled event_type: ${event_type}`)
+    }
+
+    res.json({ success: true })
   } catch (err: any) {
-    logger.error('[Webhook] Higgsfield webhook error:', err)
-    // Always return 200 to Higgsfield so it doesn't retry unnecessarily
+    logger.error('[Webhook] HeyGen webhook error:', err)
+    // Return 200 so HeyGen does not retry unnecessarily
     res.status(200).json({ success: false, message: 'Internal error — logged' })
   }
 }

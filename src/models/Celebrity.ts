@@ -1,7 +1,5 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
-export type AvatarStatus = 'none' | 'training' | 'ready' | 'failed'
-
 export interface ICelebrity extends Document {
   name: string
   nameAr: string
@@ -18,11 +16,8 @@ export interface ICelebrity extends Document {
   initials: string
   thumbnailUrl?: string
   voiceModelId?: string
-  avatarModelId?: string
-  avatarStatus: AvatarStatus
-  avatarTrainingRequestId?: string
-  trainingImageUrls: string[]
-  trainingAudioUrl?: string
+  trainingAudioUrl?: string   // fallback audio for queue when ElevenLabs is unavailable
+  heygenPhotoId?: string      // cached HeyGen talking_photo_id — avoids re-uploading image
   isActive: boolean
   isFeatured: boolean
   priceRange: {
@@ -52,13 +47,10 @@ const CelebritySchema = new Schema<ICelebrity>(
     bioAr:         { type: String },
     avatarColor:   { type: String, default: 'linear-gradient(135deg, #9a78fe, #422266)' },
     initials:      { type: String, required: true, maxlength: 3 },
-    thumbnailUrl:             { type: String },
-    voiceModelId:             { type: String },
-    avatarModelId:            { type: String },
-    avatarStatus:             { type: String, enum: ['none','training','ready','failed'], default: 'none' },
-    avatarTrainingRequestId:  { type: String },
-    trainingImageUrls:        [{ type: String }],
-    trainingAudioUrl:         { type: String },
+    thumbnailUrl:      { type: String },
+    voiceModelId:      { type: String },
+    trainingAudioUrl:  { type: String },
+    heygenPhotoId:     { type: String },
     isActive:      { type: Boolean, default: true },
     isFeatured:    { type: Boolean, default: false },
     priceRange: {
@@ -71,8 +63,6 @@ const CelebritySchema = new Schema<ICelebrity>(
   { timestamps: true }
 )
 
-CelebritySchema.index({ slug: 1 })
 CelebritySchema.index({ industry: 1, isActive: 1 })
-CelebritySchema.index({ avatarTrainingRequestId: 1 }, { sparse: true })
 
 export const Celebrity = mongoose.model<ICelebrity>('Celebrity', CelebritySchema)

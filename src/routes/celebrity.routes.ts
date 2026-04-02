@@ -1,17 +1,16 @@
 import { Router } from 'express'
 import multer from 'multer'
-import { listCelebrities, getCelebrity, createCelebrity, updateCelebrity, toggleCelebrityStatus, deleteCelebrity, createCelebrityAvatar } from '../controllers/celebrity.controller'
+import { listCelebrities, getCelebrity, createCelebrity, updateCelebrity, toggleCelebrityStatus, deleteCelebrity, cloneCelebrityVoice } from '../controllers/celebrity.controller'
 import { requireAdmin, requirePermission } from '../middleware/adminAuth'
 
 const router = Router()
 
-// Multer: memory storage, max 80 images (10 MB each) + 1 audio (100 MB)
-const avatarUpload = multer({
+// Multer for voice cloning: up to 25 audio samples (50 MB each)
+const voiceUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB per file
+  limits: { fileSize: 50 * 1024 * 1024 },
 }).fields([
-  { name: 'images', maxCount: 80 },
-  { name: 'audio',  maxCount: 1  },
+  { name: 'audio', maxCount: 25 },
 ])
 
 // Public
@@ -22,7 +21,7 @@ router.get('/:slug', getCelebrity)
 router.post('/', requireAdmin, requirePermission('celebrities.manage'), createCelebrity)
 router.put('/:id', requireAdmin, requirePermission('celebrities.manage'), updateCelebrity)
 router.patch('/:id/toggle', requireAdmin, requirePermission('celebrities.manage'), toggleCelebrityStatus)
-router.post('/:id/create-avatar', requireAdmin, requirePermission('celebrities.manage'), avatarUpload, createCelebrityAvatar)
+router.post('/:id/clone-voice', requireAdmin, requirePermission('celebrities.manage'), voiceUpload, cloneCelebrityVoice)
 router.delete('/:id', requireAdmin, requirePermission('celebrities.manage'), deleteCelebrity)
 
 export default router

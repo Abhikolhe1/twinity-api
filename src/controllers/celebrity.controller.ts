@@ -1,9 +1,35 @@
 import { Request, Response, NextFunction } from 'express'
+import sharp from 'sharp'
 import { Celebrity } from '../models/Celebrity'
 import { AppError } from '../middleware/errorHandler'
 import { aiService } from '../services/ai.service'
 import { s3Service } from '../services/s3.service'
+import { settingsService } from '../services/settings.service'
 import { logger } from '../config/logger'
+
+/**
+ * If thumbnailUrl is a base64 data URL (set by the admin file picker), convert
+ * it to JPEG and upload to S3. Always stores as .jpg so HeyGen can accept it.
+ */
+async function resolveThumbnailUrl(thumbnailUrl: string | undefined, slug: string): Promise<string | undefined> {
+  if (!thumbnailUrl || !thumbnailUrl.startsWith('data:')) return thumbnailUrl
+
+  const match = thumbnailUrl.match(/^data:([^;]+);base64,(.+)$/)
+  if (!match) return thumbnailUrl
+
+  const rawBuffer = Buffer.from(match[2], 'base64')
+  const jpegBuffer = await sharp(rawBuffer).jpeg({ quality: 90 }).toBuffer()
+
+  const { s3Bucket } = await settingsService.get()
+  const key = `celebrities/${slug}/thumbnail.jpg`
+  const result = await s3Service.upload(s3Bucket, key, jpegBuffer, 'image/jpeg')
+  logger.info(`[Celebrity] Thumbnail converted to JPEG and uploaded to S3: ${result.url}`)
+  return result.url
+}
+
+async function signDoc(doc: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return { ...doc, thumbnailUrl: await s3Service.presignIfS3(doc.thumbnailUrl as string | undefined) }
+}
 
 export async function listCelebrities(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -17,8 +43,9 @@ export async function listCelebrities(req: Request, res: Response, next: NextFun
         { nameAr: { $regex: search, $options: 'i' } },
       ]
     }
-    const celebrities = await Celebrity.find(filter).sort({ isFeatured: -1, totalOrders: -1 })
-    res.json({ success: true, data: celebrities, total: celebrities.length })
+    const raw = await Celebrity.find(filter).sort({ isFeatured: -1, totalOrders: -1 }).lean()
+    const data = await Promise.all(raw.map(signDoc))
+    res.json({ success: true, data, total: data.length })
   } catch (err) {
     next(err)
   }
@@ -26,9 +53,9 @@ export async function listCelebrities(req: Request, res: Response, next: NextFun
 
 export async function getCelebrity(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const celeb = await Celebrity.findOne({ slug: req.params.slug, isActive: true })
-    if (!celeb) throw new AppError('Celebrity not found', 404)
-    res.json({ success: true, data: celeb })
+    const raw = await Celebrity.findOne({ slug: req.params.slug, isActive: true }).lean()
+    if (!raw) throw new AppError('Celebrity not found', 404)
+    res.json({ success: true, data: await signDoc(raw) })
   } catch (err) {
     next(err)
   }
@@ -37,8 +64,11 @@ export async function getCelebrity(req: Request, res: Response, next: NextFuncti
 // Admin only
 export async function createCelebrity(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const celeb = await Celebrity.create(req.body)
-    res.status(201).json({ success: true, data: celeb })
+    const body = { ...req.body }
+    const slug = body.slug || body.name?.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+    body.thumbnailUrl = await resolveThumbnailUrl(body.thumbnailUrl, slug)
+    const celeb = await Celebrity.create(body)
+    res.status(201).json({ success: true, data: await signDoc(celeb.toObject()) })
   } catch (err) {
     next(err)
   }
@@ -46,9 +76,12 @@ export async function createCelebrity(req: Request, res: Response, next: NextFun
 
 export async function updateCelebrity(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const celeb = await Celebrity.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true })
-    if (!celeb) throw new AppError('Celebrity not found', 404)
-    res.json({ success: true, data: celeb })
+    const existing = await Celebrity.findById(req.params.id)
+    if (!existing) throw new AppError('Celebrity not found', 404)
+    const body = { ...req.body }
+    body.thumbnailUrl = await resolveThumbnailUrl(body.thumbnailUrl, existing.slug)
+    const celeb = await Celebrity.findByIdAndUpdate(req.params.id, body, { new: true, runValidators: true, lean: true })
+    res.json({ success: true, data: await signDoc(celeb as Record<string, unknown>) })
   } catch (err) {
     next(err)
   }
@@ -60,7 +93,7 @@ export async function toggleCelebrityStatus(req: Request, res: Response, next: N
     if (!celeb) throw new AppError('Celebrity not found', 404)
     celeb.isActive = !celeb.isActive
     await celeb.save()
-    res.json({ success: true, data: celeb, message: `Celebrity ${celeb.isActive ? 'activated' : 'deactivated'}` })
+    res.json({ success: true, data: await signDoc(celeb.toObject()), message: `Celebrity ${celeb.isActive ? 'activated' : 'deactivated'}` })
   } catch (err) {
     next(err)
   }
@@ -76,54 +109,37 @@ export async function deleteCelebrity(req: Request, res: Response, next: NextFun
   }
 }
 
-export async function createCelebrityAvatar(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function cloneCelebrityVoice(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const celeb = await Celebrity.findById(req.params.id)
     if (!celeb) throw new AppError('Celebrity not found', 404)
 
-    // Soul ID is created in the Higgsfield web dashboard, then stored here.
-    // The admin passes the soulId in the request body.
-    const { soulId } = req.body as { soulId?: string }
-    if (!soulId || !soulId.trim()) {
-      throw new AppError(
-        'soulId is required. Create the Soul in the Higgsfield dashboard (https://cloud.higgsfield.ai/character) and paste the ID here.',
-        400,
-      )
+    const files = req.files as { audio?: Express.Multer.File[] } | undefined
+    const audioFiles = files?.audio ?? []
+
+    if (audioFiles.length === 0) {
+      throw new AppError('At least one audio sample file is required for voice cloning', 400)
     }
 
-    logger.info(`[Celebrity] Registering Higgsfield Soul ID for: ${celeb.name}, soulId=${soulId}`)
+    const language = (req.body.language as string | undefined)?.trim() || 'en'
+    const existingVoiceId = celeb.voiceModelId || undefined
+    const action = existingVoiceId ? `editing existing voice ${existingVoiceId}` : 'creating new voice'
+    logger.info(`[Celebrity] Cloning voice for: ${celeb.name}, ${action}, files=${audioFiles.length}, language=${language}`)
 
-    // Upload training assets (images + audio) to S3 if provided
-    const files = req.files as { images?: Express.Multer.File[]; audio?: Express.Multer.File[] } | undefined
-    const imageFiles = files?.images ?? []
-    const audioFile  = files?.audio?.[0] ?? null
+    const { voiceId } = await aiService.cloneVoice({
+      name: `${celeb.name} — Twinity`,
+      language,
+      existingVoiceId,
+      audioFiles: audioFiles.map(f => ({ buffer: f.buffer, originalname: f.originalname, mimetype: f.mimetype })),
+    })
 
-    if (imageFiles.length > 0 || audioFile) {
-      logger.info(`[Celebrity] Uploading ${imageFiles.length} images + ${audioFile ? '1 audio' : 'no audio'} to S3 for: ${celeb.name}`)
-      const { imageUrls, audioUrl } = await s3Service.uploadCelebrityAssets({
-        slug:   celeb.slug,
-        images: imageFiles.map(f => ({ originalname: f.originalname, buffer: f.buffer, mimetype: f.mimetype })),
-        audio:  audioFile ? { originalname: audioFile.originalname, buffer: audioFile.buffer, mimetype: audioFile.mimetype } : null,
-      })
-
-      if (imageUrls.length > 0) celeb.trainingImageUrls = imageUrls
-      if (audioUrl) celeb.trainingAudioUrl = audioUrl
-      logger.info(`[Celebrity] Uploaded ${imageUrls.length} images and audio=${audioUrl ?? 'none'} for: ${celeb.name}`)
-    }
-
-    celeb.avatarModelId = soulId.trim()
-    celeb.avatarStatus  = 'ready'
+    celeb.voiceModelId = voiceId
     await celeb.save()
 
     res.json({
       success: true,
-      data: {
-        avatarModelId:     celeb.avatarModelId,
-        avatarStatus:      celeb.avatarStatus,
-        trainingImageUrls: celeb.trainingImageUrls,
-        trainingAudioUrl:  celeb.trainingAudioUrl,
-      },
-      message: `Soul ID saved for ${celeb.name}`,
+      data: { voiceModelId: voiceId },
+      message: `Voice cloned successfully for ${celeb.name}`,
     })
   } catch (err) {
     next(err)

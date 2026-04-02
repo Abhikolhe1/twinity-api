@@ -6,7 +6,17 @@ import { Lead } from '../models/Lead'
 import { AppError } from '../middleware/errorHandler'
 import { queueService } from '../services/queue.service'
 import { emailService } from '../services/email.service'
+import { s3Service } from '../services/s3.service'
 import { AuthRequest } from '../middleware/auth'
+
+async function signJobThumbnail(job: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const celeb = job.celebrityId as Record<string, unknown> | undefined
+  if (!celeb?.thumbnailUrl) return job
+  return {
+    ...job,
+    celebrityId: { ...celeb, thumbnailUrl: await s3Service.presignIfS3(celeb.thumbnailUrl as string) },
+  }
+}
 
 function generateRef(): string {
   const now = new Date()
@@ -61,11 +71,13 @@ export async function getMyJobs(req: AuthRequest, res: Response, next: NextFunct
     const filter: Record<string, unknown> = { userId: req.userId }
     if (status && status !== 'all') filter.status = status
 
-    const jobs = await VideoJob.find(filter)
+    const raw = await VideoJob.find(filter)
       .populate('celebrityId', 'name nameAr initials avatarColor thumbnailUrl')
       .sort({ createdAt: -1 })
+      .lean()
 
-    res.json({ success: true, data: jobs, total: jobs.length })
+    const data = await Promise.all(raw.map(j => signJobThumbnail(j as Record<string, unknown>)))
+    res.json({ success: true, data, total: data.length })
   } catch (err) {
     next(err)
   }
@@ -73,10 +85,11 @@ export async function getMyJobs(req: AuthRequest, res: Response, next: NextFunct
 
 export async function getJob(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const job = await VideoJob.findOne({ referenceId: req.params.referenceId, userId: req.userId })
+    const raw = await VideoJob.findOne({ referenceId: req.params.referenceId, userId: req.userId })
       .populate('celebrityId', 'name nameAr initials avatarColor thumbnailUrl')
-    if (!job) throw new AppError('Job not found', 404)
-    res.json({ success: true, data: job })
+      .lean()
+    if (!raw) throw new AppError('Job not found', 404)
+    res.json({ success: true, data: await signJobThumbnail(raw as Record<string, unknown>) })
   } catch (err) {
     next(err)
   }

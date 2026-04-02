@@ -8,6 +8,7 @@ import { Lead } from '../models/Lead'
 import { Celebrity } from '../models/Celebrity'
 import { AppError } from '../middleware/errorHandler'
 import { emailService } from '../services/email.service'
+import { s3Service } from '../services/s3.service'
 import { env } from '../config/env'
 
 // Admin login
@@ -111,11 +112,15 @@ export async function adminListCelebrities(req: Request, res: Response, next: Ne
       ]
     }
     const skip = (Number(page) - 1) * Number(limit)
-    const [celebrities, total] = await Promise.all([
-      Celebrity.find(filter).sort({ isFeatured: -1, isActive: -1, totalOrders: -1 }).skip(skip).limit(Number(limit)),
+    const [raw, total] = await Promise.all([
+      Celebrity.find(filter).sort({ isFeatured: -1, isActive: -1, totalOrders: -1 }).skip(skip).limit(Number(limit)).lean(),
       Celebrity.countDocuments(filter),
     ])
-    res.json({ success: true, data: celebrities, total, page: Number(page), pages: Math.ceil(total / Number(limit)) })
+    const data = await Promise.all(raw.map(async c => ({
+      ...c,
+      thumbnailUrl: await s3Service.presignIfS3(c.thumbnailUrl),
+    })))
+    res.json({ success: true, data, total, page: Number(page), pages: Math.ceil(total / Number(limit)) })
   } catch (err) {
     next(err)
   }

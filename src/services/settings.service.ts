@@ -10,10 +10,7 @@ const CACHE_TTL_MS = 30_000
 
 interface CachedSettings {
   elevenLabsKey: string
-  syncLabsKey: string
-  higgsfieldKey: string
-  higgsfieldSecret: string
-  higgsfieldWebhookSecret: string
+  heygenKey: string
   watermarkText: string
   watermarkOpacity: string
   watermarkPosition: string
@@ -36,11 +33,8 @@ async function load(): Promise<CachedSettings> {
     const doc = await Settings.findOne({ key: 'global' })
     const d = (doc?.toObject() ?? {}) as Record<string, string>
     _cache = {
-      elevenLabsKey:     d.elevenLabsKey     || env.externalApis.elevenLabs       || '',
-      syncLabsKey:       d.syncLabsKey       || env.externalApis.syncLabs         || '',
-      higgsfieldKey:            d.higgsfieldKey            || env.externalApis.higgsfield       || '',
-      higgsfieldSecret:         d.higgsfieldSecret         || env.externalApis.higgsfieldSecret || '',
-      higgsfieldWebhookSecret:  d.higgsfieldWebhookSecret  || env.externalApis.higgsfieldWebhookSecret || '',
+      elevenLabsKey: d.elevenLabsKey || env.externalApis.elevenLabs || '',
+      heygenKey:     d.heygenKey     || env.externalApis.heygen     || '',
       watermarkText:     d.watermarkText     || 'twinity.ai · PREVIEW',
       watermarkOpacity:  d.watermarkOpacity  || '0.35',
       watermarkPosition: d.watermarkPosition || 'Bottom Center',
@@ -55,11 +49,8 @@ async function load(): Promise<CachedSettings> {
   } catch (err) {
     logger.error('[Settings] Failed to load from DB, using env fallback:', err)
     _cache = {
-      elevenLabsKey:           env.externalApis.elevenLabs              || '',
-      syncLabsKey:             env.externalApis.syncLabs                || '',
-      higgsfieldKey:           env.externalApis.higgsfield              || '',
-      higgsfieldSecret:        env.externalApis.higgsfieldSecret        || '',
-      higgsfieldWebhookSecret: env.externalApis.higgsfieldWebhookSecret || '',
+      elevenLabsKey: env.externalApis.elevenLabs || '',
+      heygenKey:     env.externalApis.heygen     || '',
       watermarkText:     'twinity.ai · PREVIEW',
       watermarkOpacity:  '0.35',
       watermarkPosition: 'Bottom Center',

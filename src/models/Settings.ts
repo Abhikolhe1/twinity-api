@@ -6,10 +6,7 @@ export interface ISettings extends Document {
   supportEmail: string
   adminEmail: string
   elevenLabsKey: string
-  syncLabsKey: string
-  higgsfieldKey: string
-  higgsfieldSecret: string
-  higgsfieldWebhookSecret: string
+  heygenKey: string
   watermarkText: string
   watermarkOpacity: string
   watermarkPosition: string
@@ -25,11 +22,8 @@ const SettingsSchema = new Schema<ISettings>(
     platformName:      { type: String, default: 'Twinity' },
     supportEmail:      { type: String, default: 'support@twinity.ai' },
     adminEmail:        { type: String, default: 'admin@twinity.ai' },
-    elevenLabsKey:     { type: String, default: '' },
-    syncLabsKey:       { type: String, default: '' },
-    higgsfieldKey:            { type: String, default: '' },
-    higgsfieldSecret:         { type: String, default: '' },
-    higgsfieldWebhookSecret:  { type: String, default: '' },
+    elevenLabsKey: { type: String, default: '' },
+    heygenKey:     { type: String, default: '' },
     watermarkText:     { type: String, default: 'twinity.ai · PREVIEW' },
     watermarkOpacity:  { type: String, default: '0.35' },
     watermarkPosition: { type: String, default: 'Bottom Center' },
@@ -53,12 +47,9 @@ function maskKey(val: string): string {
 
 SettingsSchema.methods.toPublicJSON = function () {
   const obj = this.toObject()
-  if (obj.elevenLabsKey)    obj.elevenLabsKey    = maskKey(obj.elevenLabsKey)
-  if (obj.syncLabsKey)      obj.syncLabsKey      = maskKey(obj.syncLabsKey)
-  if (obj.higgsfieldKey)           obj.higgsfieldKey           = maskKey(obj.higgsfieldKey)
-  if (obj.higgsfieldSecret)        obj.higgsfieldSecret        = maskKey(obj.higgsfieldSecret)
-  if (obj.higgsfieldWebhookSecret) obj.higgsfieldWebhookSecret = maskKey(obj.higgsfieldWebhookSecret)
-  if (obj.awsSecretAccessKey)      obj.awsSecretAccessKey      = maskKey(obj.awsSecretAccessKey)
+  if (obj.elevenLabsKey)      obj.elevenLabsKey      = maskKey(obj.elevenLabsKey)
+  if (obj.heygenKey)          obj.heygenKey          = maskKey(obj.heygenKey)
+  if (obj.awsSecretAccessKey) obj.awsSecretAccessKey = maskKey(obj.awsSecretAccessKey)
   return obj
 }
 
