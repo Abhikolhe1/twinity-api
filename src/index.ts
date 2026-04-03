@@ -2,6 +2,7 @@ import { env } from './config/env'
 import { connectDatabase } from './config/database'
 import { logger } from './config/logger'
 import app from './app'
+import { queueService } from './services/queue.service'
 
 async function start() {
   await connectDatabase()
@@ -14,6 +15,7 @@ async function start() {
     logger.info(`  Admin:       /api/admin`)
     logger.info(`  Templates:   /api/templates`)
   })
+  queueService.startPoller()
 }
 
 start()

@@ -55,7 +55,7 @@ async function generateVoicePreview(voiceId: string, language: string, apiKey: s
 // ─── Higgsfield API ───────────────────────────────────────────────────────────
 const HIGGSFIELD_BASE = 'https://platform.higgsfield.ai'
 
-export interface HiggsfieldResult { jobId: string; status: 'submitted' | 'stub' }
+export interface HiggsfieldResult { jobId: string; statusUrl?: string; status: 'submitted' | 'stub' }
 
 // ─── OpenAI API ───────────────────────────────────────────────────────────────
 const OPENAI_BASE = 'https://api.openai.com'
@@ -243,9 +243,14 @@ export const aiService = {
       image_url: params.imageUrl,
       prompt:    params.script,
     }
+    if (params.audioUrl) body.audio_url = params.audioUrl
 
     const endpoint = new URL(`${HIGGSFIELD_BASE}/bytedance/seedance/v1/pro/image-to-video`)
     if (params.callbackUrl) endpoint.searchParams.set('hf_webhook', params.callbackUrl)
+
+    logger.info(`[AI] Higgsfield request URL: ${endpoint.toString()}`)
+    logger.info(`[AI] Higgsfield request body: ${JSON.stringify({ ...body, audio_url: body.audio_url ? '[set]' : '[not set]', image_url: body.image_url ? '[set]' : '[not set]' })}`)
+    logger.info(`[AI] Higgsfield webhook URL: ${params.callbackUrl ?? '[none]'}`)
 
     const res = await fetch(endpoint.toString(), {
       method: 'POST',
@@ -259,11 +264,12 @@ export const aiService = {
       const err = await res.text()
       throw new Error(`Higgsfield image-to-video failed (${res.status}): ${err}`)
     }
-    const data = await res.json() as { id?: string; job_id?: string; request_id?: string }
-    const jobId = data.id || data.job_id || data.request_id
+    const data = await res.json() as { id?: string; job_id?: string; request_id?: string; status_url?: string }
+    const jobId     = data.request_id || data.id || data.job_id
+    const statusUrl = data.status_url
     if (!jobId) throw new Error(`Higgsfield: no job ID in response: ${JSON.stringify(data)}`)
-    logger.info(`[AI] Higgsfield image-to-video job queued: job_id=${jobId}`)
-    return { jobId, status: 'submitted' }
+    logger.info(`[AI] Higgsfield image-to-video job queued: request_id=${jobId}, status_url=${statusUrl ?? 'none'}`)
+    return { jobId, statusUrl, status: 'submitted' }
   },
 
   /**

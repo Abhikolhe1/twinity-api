@@ -23,9 +23,10 @@ export interface IVideoJob extends Document {
   previewUrl?: string
   finalVideoUrl?: string
   watermarkedUrl?: string
-  aiJobId?: string        // job_id from Higgsfield
-  voiceJobId?: string     // jobId from ElevenLabs TTS
-  voiceAudioUrl?: string  // S3 URL of generated voice audio
+  aiJobId?: string             // request_id from Higgsfield
+  higgsfieldStatusUrl?: string // polling URL returned by Higgsfield on submission
+  voiceJobId?: string          // jobId from ElevenLabs TTS
+  voiceAudioUrl?: string       // S3 URL of generated voice audio
   // Scene settings (customer-provided context for video generation)
   propImages?: string[]
   sceneNotes?: string
@@ -64,8 +65,9 @@ const VideoJobSchema = new Schema<IVideoJob>(
     previewUrl:      { type: String },
     finalVideoUrl:   { type: String },
     watermarkedUrl:  { type: String },
-    aiJobId:            { type: String },
-    voiceJobId:         { type: String },
+    aiJobId:               { type: String },
+    higgsfieldStatusUrl:   { type: String },
+    voiceJobId:            { type: String },
     voiceAudioUrl:      { type: String },
     propImages:         [{ type: String }],
     sceneNotes:         { type: String },

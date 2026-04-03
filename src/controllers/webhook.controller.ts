@@ -17,50 +17,50 @@ import { logger } from '../config/logger'
 // ── Higgsfield webhook — video generation events ──────────────────────────────
 
 interface HiggsfieldWebhookPayload {
+  // Higgsfield standard payload shape (docs.higgsfield.ai)
+  status?: string
+  request_id?: string
+  video?: { url?: string }
+  error?: string
+  // Legacy / alternate shapes (kept for resilience)
   event?: string
+  id?: string
+  video_url?: string
   data?: {
     id?: string
     status?: string
     video_url?: string
     error?: string
-    metadata?: { callback_id?: string }
   }
-  // some Higgsfield versions send fields at top level
-  id?: string
-  status?: string
-  video_url?: string
-  error?: string
-  metadata?: { callback_id?: string }
 }
 
 export async function higgsfieldWebhook(req: Request, res: Response): Promise<void> {
   try {
     const payload = req.body as HiggsfieldWebhookPayload
-    // Support both nested (data.xxx) and flat (xxx) shapes
-    const eventName  = payload.event ?? (payload.data?.status ?? payload.status ?? '')
-    const jobId      = payload.data?.id ?? payload.id ?? ''
-    const videoUrl   = payload.data?.video_url ?? payload.video_url ?? ''
-    const errorMsg   = payload.data?.error ?? payload.error ?? ''
-    const callbackId = payload.data?.metadata?.callback_id ?? payload.metadata?.callback_id ?? ''
+    logger.info('[Webhook] Higgsfield raw payload:', JSON.stringify(payload))
 
-    logger.info(`[Webhook] Higgsfield event — event=${eventName}, job_id=${jobId}, callback_id=${callbackId}`)
+    // request_id is the canonical Higgsfield field (matches what was returned when job was submitted)
+    const jobId    = payload.request_id ?? payload.data?.id ?? payload.id ?? ''
+    const videoUrl = payload.video?.url ?? payload.video_url ?? payload.data?.video_url ?? ''
+    const errorMsg = payload.error ?? payload.data?.error ?? ''
+    const status   = payload.status ?? payload.event ?? payload.data?.status ?? ''
 
-    const isSuccess = eventName === 'generation.completed' || eventName === 'completed'
-    const isFailure = eventName === 'generation.failed'    || eventName === 'failed'
+    logger.info(`[Webhook] Higgsfield event — status=${status}, request_id=${jobId}`)
+
+    const isSuccess = status === 'generation.completed' || status === 'completed'
+    const isFailure = status === 'generation.failed'    || status === 'failed'    || status === 'error'
 
     if (!isSuccess && !isFailure) {
-      logger.info(`[Webhook] Higgsfield unhandled event: ${eventName}`)
+      logger.info(`[Webhook] Higgsfield unhandled status: ${status}`)
       res.json({ success: true })
       return
     }
 
-    // Find job by Higgsfield job_id (stored in aiJobId) or by referenceId (from metadata)
-    const job = callbackId
-      ? await VideoJob.findOne({ referenceId: callbackId })
-      : await VideoJob.findOne({ aiJobId: jobId })
+    // Find job by request_id stored in aiJobId
+    const job = await VideoJob.findOne({ aiJobId: jobId })
 
     if (!job) {
-      logger.warn(`[Webhook] Higgsfield: no job found for job_id=${jobId}, callback_id=${callbackId}`)
+      logger.warn(`[Webhook] Higgsfield: no job found for request_id=${jobId}`)
       res.status(404).json({ success: false, message: 'Job not found' })
       return
     }

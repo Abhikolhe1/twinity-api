@@ -4,8 +4,9 @@
  * Pipeline:
  *   1. Generate voice audio via ElevenLabs TTS (using celebrity's voiceModelId)
  *   2. Submit Higgsfield lipsync job (celebrity image + audio → lip-synced video)
- *      — async; completion delivered via Higgsfield webhook → higgsfieldWebhook()
- *
+ *      — async; completion delivered via:
+ *        a) Higgsfield webhook → higgsfieldWebhook()   (when SERVER_URL is set)
+ *        b) Status poll fallback — pollInProgressJobs() checks every 30s
  *
  * Stub mode (no Higgsfield key): job advances directly to review with audio preview URL.
  */
@@ -16,6 +17,66 @@ import { aiService } from './ai.service'
 import { s3Service } from './s3.service'
 import { settingsService } from './settings.service'
 import { env } from '../config/env'
+
+const POLL_INTERVAL_MS = 30_000  // poll every 30 seconds
+
+interface HiggsfieldStatusResponse {
+  status?: string
+  request_id?: string
+  video?: { url?: string }
+  error?: string
+}
+
+async function pollInProgressJobs(): Promise<void> {
+  try {
+    const jobs = await VideoJob.find({ status: 'in-progress', higgsfieldStatusUrl: { $exists: true, $ne: '' } })
+    if (jobs.length === 0) return
+
+    logger.info(`[Queue] Polling ${jobs.length} in-progress job(s)`)
+    const { higgsfieldKeyId, higgsfieldKeySecret } = await settingsService.get()
+    if (!higgsfieldKeyId || !higgsfieldKeySecret) return
+
+    for (const job of jobs) {
+      try {
+        const res = await fetch(job.higgsfieldStatusUrl!, {
+          headers: { 'Authorization': `Key ${higgsfieldKeyId}:${higgsfieldKeySecret}` },
+        })
+        if (!res.ok) {
+          logger.warn(`[Queue] Poll status ${res.status} for job ${job.referenceId}`)
+          continue
+        }
+        const data = await res.json() as HiggsfieldStatusResponse
+        logger.info(`[Queue] Poll result for ${job.referenceId}: status=${data.status}`)
+
+        if (data.status === 'completed') {
+          const videoUrl = data.video?.url ?? ''
+          if (!videoUrl) {
+            logger.warn(`[Queue] Poll: completed but no video URL for ${job.referenceId}`)
+            continue
+          }
+          job.finalVideoUrl  = videoUrl
+          job.watermarkedUrl = videoUrl
+          job.previewUrl     = videoUrl
+          job.status         = 'review'
+          job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'Higgsfield video complete (poll)' })
+          await job.save()
+          logger.info(`[Queue] Job ${job.referenceId} → review via poll, url=${videoUrl}`)
+        } else if (data.status === 'failed' || data.status === 'error') {
+          job.status       = 'failed'
+          job.errorMessage = data.error ?? 'Higgsfield render failed'
+          job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
+          await job.save()
+          logger.warn(`[Queue] Job ${job.referenceId} → failed via poll: ${job.errorMessage}`)
+        }
+        // 'processing' / 'pending' / other — leave as in-progress, will poll again
+      } catch (err) {
+        logger.warn(`[Queue] Poll error for job ${job.referenceId}:`, err)
+      }
+    }
+  } catch (err) {
+    logger.error('[Queue] pollInProgressJobs error:', err)
+  }
+}
 
 async function processJob(jobId: string): Promise<void> {
   logger.info(`[Queue] processJob started: jobId=${jobId}`)
@@ -72,10 +133,16 @@ async function processJob(jobId: string): Promise<void> {
 
     const callbackUrl = env.serverUrl ? `${env.serverUrl}/api/webhooks/higgsfield` : undefined
 
-    // Build an enriched prompt: script + scene context
+    // Build an enriched prompt: script + all available scene context
     const sceneParts: string[] = [job.script]
-    if (job.sceneNotes) sceneParts.push(`Scene: ${job.sceneNotes}`)
+    if (job.sceneNotes) sceneParts.push(`Scene description: ${job.sceneNotes}`)
+    // Include background image URL only when it's a real HTTP URL (not base64)
+    if (job.backgroundImageUrl && job.backgroundImageUrl.startsWith('http')) {
+      sceneParts.push(`Background reference: ${job.backgroundImageUrl}`)
+    }
     const prompt = sceneParts.join('. ')
+    logger.info(`[Queue] Job ${job.referenceId} — Higgsfield prompt: ${prompt.slice(0, 200)}`)
+    logger.info(`[Queue] Job ${job.referenceId} — audio_url: ${voiceAudioUrl}`)
 
     const render = await aiService.higgsfieldVideoGenerate({
       audioUrl:    voiceAudioUrl,
@@ -87,6 +154,7 @@ async function processJob(jobId: string): Promise<void> {
     })
 
     job.aiJobId = render.jobId
+    if (render.statusUrl) job.higgsfieldStatusUrl = render.statusUrl
 
     if (render.status === 'stub') {
       // Stub / no Higgsfield key — advance directly to review with audio preview
@@ -120,5 +188,12 @@ export const queueService = {
 
   async dispatchNotification(type: string, payload: Record<string, unknown>): Promise<void> {
     logger.info(`[Queue] Notification dispatch: ${type}`, payload)
+  },
+
+  startPoller(): void {
+    logger.info(`[Queue] Starting Higgsfield status poller (interval: ${POLL_INTERVAL_MS / 1000}s)`)
+    setInterval(pollInProgressJobs, POLL_INTERVAL_MS)
+    // Run once immediately on startup to catch any jobs left in-progress from a previous run
+    pollInProgressJobs().catch(() => null)
   },
 }
