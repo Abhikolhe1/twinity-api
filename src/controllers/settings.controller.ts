@@ -18,7 +18,9 @@ function maskKey(val: string): string {
 
 const SECRET_FIELDS = [
   'elevenLabsKey',
-  'heygenKey',
+  'higgsfieldKeyId',
+  'higgsfieldKeySecret',
+  'openaiKey',
   'awsSecretAccessKey',
 ] as const
 

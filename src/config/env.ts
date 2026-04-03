@@ -37,9 +37,11 @@ export const env = {
   },
   externalApis: {
     elevenLabs:  process.env.ELEVENLABS_API_KEY  || '',
-    heygen:      process.env.HEYGEN_API_KEY      || '',
-    openai:      process.env.OPENAI_API_KEY        || '',
+    higgsfieldKeyId:     process.env.HIGGSFIELD_KEY_ID     || '',
+    higgsfieldKeySecret: process.env.HIGGSFIELD_KEY_SECRET || '',
+    openai:      process.env.OPENAI_API_KEY      || '',
   },
+  serverUrl: process.env.SERVER_URL || '',
   cors: {
     clientUrl: process.env.CLIENT_URL || 'http://localhost:3000',
     adminUrl: process.env.ADMIN_URL || 'http://localhost:3001',

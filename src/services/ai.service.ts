@@ -1,15 +1,10 @@
 /**
- * AI Service — integrates ElevenLabs (TTS voice) and HeyGen (talking photo lip-sync).
+ * AI Service — integrates ElevenLabs (TTS voice) and Higgsfield (lip-sync video).
  * API keys are loaded dynamically from the Settings DB (via settingsService).
  *
  * Pipeline:
- *   1. generateVoice() — ElevenLabs TTS using celebrity's cloned voiceModelId → MP3
- *   2. heygenLipSync() — HeyGen Talking Photo: celebrity image + MP3 → lip-synced video
- *
- * HeyGen Talking Photo workflow:
- *   - First use: upload celebrity image → get talking_photo_id (saved on Celebrity document)
- *   - Subsequent uses: talking_photo_id reused from Celebrity.heygenPhotoId
- *   - Video generation is async; completion is delivered via HeyGen webhook
+ *   1. generateVoice()      — ElevenLabs TTS using celebrity's cloned voiceModelId → MP3
+ *   2. higgsfieldLipSync()  — Higgsfield: celebrity image + MP3 → lip-synced video (async)
  *
  * All methods fall back to stubs when credentials are not configured.
  */
@@ -18,19 +13,8 @@ import { logger } from '../config/logger'
 import { settingsService } from './settings.service'
 import { s3Service } from './s3.service'
 
-export interface VoiceCloneResult     { jobId: string; audioUrl: string }
-export interface VoiceCloneIdResult   { voiceId: string }
-export interface HeyGenResult         { requestId: string; status: 'submitted' | 'training' | 'stub'; photoId?: string }
-
-// ─── HeyGen API ───────────────────────────────────────────────────────────────
-const HEYGEN_BASE = 'https://api.heygen.com'
-
-function heygenDimension(aspectRatio: string): { width: string; height: string } {
-  if (aspectRatio === '9:16') return { width: '720',  height: '1280' }
-  if (aspectRatio === '1:1')  return { width: '720',  height: '720'  }
-  if (aspectRatio === '4:5')  return { width: '576',  height: '720'  }
-  return { width: '1280', height: '720' } // 16:9 default
-}
+export interface VoiceCloneResult   { jobId: string; audioUrl: string }
+export interface VoiceCloneIdResult { voiceId: string }
 
 // ─── ElevenLabs ───────────────────────────────────────────────────────────────
 const ELEVENLABS_BASE = 'https://api.elevenlabs.io/v1'
@@ -68,6 +52,11 @@ async function generateVoicePreview(voiceId: string, language: string, apiKey: s
   }
 }
 
+// ─── Higgsfield API ───────────────────────────────────────────────────────────
+const HIGGSFIELD_BASE = 'https://platform.higgsfield.ai'
+
+export interface HiggsfieldResult { jobId: string; status: 'submitted' | 'stub' }
+
 // ─── OpenAI API ───────────────────────────────────────────────────────────────
 const OPENAI_BASE = 'https://api.openai.com'
 
@@ -103,8 +92,9 @@ export const aiService = {
     const { s3Bucket } = await settingsService.get()
     const key = `celebrities/${celebSlug}/generated-audio/${jobId}.mp3`
     const upload = await s3Service.upload(s3Bucket, key, audioBuffer, 'audio/mpeg')
-    // Generate a pre-signed URL so HeyGen can download the private S3 object.
-    // Valid for 2 hours — enough time for HeyGen to process the job.
+    // Generate a pre-signed URL so Higgsfield can download the private S3 object.
+    // Valid for 2 hours — enough time for Higgsfield to process the job.
+    // Pre-sign the S3 URL so Higgsfield can download the private audio object (valid 2 hours)
     const audioUrl = upload.stub
       ? upload.url
       : await s3Service.getPresignedUrl(s3Bucket, upload.key, 7200)
@@ -226,162 +216,113 @@ export const aiService = {
   },
 
   /**
-   * HeyGen — lip-sync a celebrity's talking photo with generated audio.
+   * Higgsfield — generate a video from a celebrity image using ByteDance Seedance v1 Pro.
+   * Accepts a raw image URL and a script prompt; returns a job ID immediately.
+   * Completion is delivered via POST {SERVER_URL}/api/webhooks/higgsfield.
    *
-   * Steps:
-   *   1. If heygenPhotoId is not cached, upload the celebrity's image to HeyGen
-   *      to create a Talking Photo and get a talking_photo_id.
-   *   2. Submit a video generation job using talking_photo_id + audioUrl.
-   *   3. Return the video_id; job completion fires a HeyGen webhook.
-   *
-   * Returns { photoId } so the caller can cache it on the Celebrity document.
+   * Auth format: "Key {api_key}:{api_key_secret}" — store both as "apiKey:apiSecret"
+   * in the higgsfieldKey settings field (colon-separated).
    */
-  async heygenLipSync(params: {
+  async higgsfieldVideoGenerate(params: {
     audioUrl: string
     imageUrl: string
-    heygenPhotoId?: string
     aspectRatio: string
     referenceId: string
     script: string
-  }): Promise<HeyGenResult> {
-    logger.info(`[AI] HeyGen lip-sync: refId=${params.referenceId}`)
-    const { heygenKey } = await settingsService.get()
+    callbackUrl?: string
+  }): Promise<HiggsfieldResult> {
+    logger.info(`[AI] Higgsfield image-to-video: refId=${params.referenceId}`)
+    const { higgsfieldKeyId, higgsfieldKeySecret } = await settingsService.get()
 
-    if (!heygenKey) {
-      logger.warn('[AI] HeyGen key not set — returning stub')
-      return { requestId: `stub-heygen-${Date.now()}`, status: 'stub' }
+    if (!higgsfieldKeyId || !higgsfieldKeySecret) {
+      logger.warn('[AI] Higgsfield key ID / secret not set — returning stub')
+      return { jobId: `stub-higgsfield-${Date.now()}`, status: 'stub' }
     }
 
-    if (!params.audioUrl) {
-      logger.warn('[AI] HeyGen: no audioUrl — returning stub')
-      return { requestId: `stub-heygen-${Date.now()}`, status: 'stub' }
+    const body: Record<string, unknown> = {
+      image_url: params.imageUrl,
+      prompt:    params.script,
     }
 
-    // Upload celebrity image to HeyGen asset storage and create a photo avatar group.
-    // Returns immediately — training completion is delivered via webhook.
-    const uploadPhoto = async (): Promise<string> => {
-      logger.info(`[AI] HeyGen: imageUrl=${params.imageUrl || '(empty)'}`)
-      if (!params.imageUrl) throw new Error('HeyGen: celebrity has no thumbnailUrl — upload a photo in the admin panel')
-      if (params.imageUrl.startsWith('data:')) throw new Error('HeyGen: celebrity thumbnailUrl is a base64 data URL — save the celebrity again to upload to S3')
+    const endpoint = new URL(`${HIGGSFIELD_BASE}/bytedance/seedance/v1/pro/image-to-video`)
+    if (params.callbackUrl) endpoint.searchParams.set('hf_webhook', params.callbackUrl)
 
-      logger.info(`[AI] HeyGen: fetching celebrity image from ${params.imageUrl}`)
-      const imgRes = await fetch(params.imageUrl)
-      if (!imgRes.ok) throw new Error(`Failed to fetch celebrity image (${imgRes.status})`)
-      const imgBuffer = await imgRes.arrayBuffer()
-
-      const ext = params.imageUrl.split('?')[0].split('.').pop()?.toLowerCase() || 'jpg'
-      const contentType = ext === 'png' ? 'image/png' : 'image/jpeg'
-
-      logger.info(`[AI] HeyGen: uploading image asset (${contentType}, ${imgBuffer.byteLength} bytes)`)
-      const assetRes = await fetch('https://upload.heygen.com/v1/asset', {
-        method: 'POST',
-        headers: { 'X-Api-Key': heygenKey, 'Content-Type': contentType },
-        body: imgBuffer,
-      })
-      if (!assetRes.ok) {
-        const err = await assetRes.text()
-        throw new Error(`HeyGen asset upload failed (${assetRes.status}): ${err}`)
-      }
-      const assetData = await assetRes.json() as { code?: number; data?: { id: string; image_key: string } }
-      const imageKey = assetData.data?.image_key
-      if (!imageKey) throw new Error(`HeyGen asset upload: no image_key in response: ${JSON.stringify(assetData)}`)
-      logger.info(`[AI] HeyGen: image asset uploaded, image_key=${imageKey}`)
-
-      const groupRes = await fetch(`${HEYGEN_BASE}/v2/photo_avatar/avatar_group/create`, {
-        method: 'POST',
-        headers: { 'X-Api-Key': heygenKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: `twinity-${Date.now()}`, image_key: imageKey }),
-      })
-      if (!groupRes.ok) {
-        const err = await groupRes.text()
-        throw new Error(`HeyGen avatar group create failed (${groupRes.status}): ${err}`)
-      }
-      const groupData = await groupRes.json() as { data?: { group_id: string } }
-      const groupId = groupData.data?.group_id
-      if (!groupId) throw new Error(`HeyGen avatar group: no group_id in response: ${JSON.stringify(groupData)}`)
-      logger.info(`[AI] HeyGen photo avatar group created: group_id=${groupId} — awaiting training webhook`)
-      return groupId
-    }
-
-    // No cached photoId — upload image and wait for training webhook before video generation
-    if (!params.heygenPhotoId) {
-      const groupId = await uploadPhoto()
-      return { requestId: groupId, status: 'training', photoId: groupId }
-    }
-
-    // Have cached photoId — submit video generation directly
-    const videoData = await aiService.submitHeyGenVideo({
-      audioUrl:    params.audioUrl,
-      photoId:     params.heygenPhotoId,
-      aspectRatio: params.aspectRatio,
-      referenceId: params.referenceId,
-      script:      params.script,
-      heygenKey,
+    const res = await fetch(endpoint.toString(), {
+      method: 'POST',
+      headers: {
+        'Authorization': `Key ${higgsfieldKeyId}:${higgsfieldKeySecret}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
     })
-
-    // Stale cached photo — re-upload and let training webhook trigger video generation
-    if (videoData.stale) {
-      logger.warn(`[AI] HeyGen: cached photoId=${params.heygenPhotoId} is stale — re-uploading`)
-      const groupId = await uploadPhoto()
-      return { requestId: groupId, status: 'training', photoId: groupId }
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`Higgsfield image-to-video failed (${res.status}): ${err}`)
     }
-
-    logger.info(`[AI] HeyGen video generation queued: video_id=${videoData.videoId}`)
-    return { requestId: videoData.videoId, status: 'submitted', photoId: params.heygenPhotoId }
+    const data = await res.json() as { id?: string; job_id?: string; request_id?: string }
+    const jobId = data.id || data.job_id || data.request_id
+    if (!jobId) throw new Error(`Higgsfield: no job ID in response: ${JSON.stringify(data)}`)
+    logger.info(`[AI] Higgsfield image-to-video job queued: job_id=${jobId}`)
+    return { jobId, status: 'submitted' }
   },
 
   /**
-   * Submit a HeyGen video generation job for an already-trained photo avatar.
-   * Called both from heygenLipSync (cached photoId path) and from the webhook
-   * handler when avatar training completes.
+   * OpenAI — generates 3+ creative scene description suggestions for a video job.
+   * Falls back to generic stubs when the key is not set.
    */
-  async submitHeyGenVideo(params: {
-    audioUrl: string
-    photoId: string
-    aspectRatio: string
-    referenceId: string
-    script: string
-    heygenKey?: string
-  }): Promise<{ videoId: string; stale: boolean }> {
-    const heygenKey = params.heygenKey ?? (await settingsService.get()).heygenKey
-    if (!heygenKey) throw new Error('HeyGen API key not configured')
+  async generateScenePrompts(params: {
+    celebrityName: string
+    productType: string
+    purpose?: string
+    script?: string
+  }): Promise<string[]> {
+    const { openaiKey } = await settingsService.get()
 
-    logger.info(`[AI] HeyGen submitVideo: refId=${params.referenceId}, photoId=${params.photoId}, script="${params.script.slice(0, 80)}..."`)
+    if (!openaiKey) {
+      logger.warn('[AI] OpenAI key not set — returning stub scene prompts')
+      return [
+        'Professional studio setting with soft, diffused lighting and a clean white background. Minimal, modern aesthetic with subtle brand colours reflected in the environment.',
+        'Outdoor urban rooftop at golden hour. Warm sunlight, city skyline in the background, relaxed yet premium atmosphere.',
+        'Luxury interior — warm ambient lighting, elegant furniture, rich dark tones. High-end feel that conveys exclusivity and trust.',
+      ]
+    }
 
-    const dimension = heygenDimension(params.aspectRatio)
-    const videoRes = await fetch(`${HEYGEN_BASE}/v2/video/generate`, {
+    const systemPrompt = 'You are a video production expert. Generate exactly 3 creative, detailed scene descriptions for a celebrity advertisement video. Each description should cover environment, lighting, background, mood, and visual atmosphere in 1–2 sentences. Return ONLY a valid JSON array of 3 strings — no markdown, no explanation, just the array.'
+    const userPrompt = `Celebrity: ${params.celebrityName}\nProduct type: ${params.productType}${params.purpose ? `\nPurpose: ${params.purpose}` : ''}${params.script ? `\nScript excerpt: ${params.script.slice(0, 200)}` : ''}\n\nGenerate 3 distinct scene descriptions.`
+
+    const res = await fetch(`${OPENAI_BASE}/v1/chat/completions`, {
       method: 'POST',
-      headers: { 'X-Api-Key': heygenKey, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title: params.script.slice(0, 200),
-        caption: false,
-        video_inputs: [{
-          character: { type: 'talking_photo', talking_photo_id: params.photoId },
-          voice:     { type: 'audio', audio_url: params.audioUrl },
-        }],
-        dimension,
-        callback_id: params.referenceId,
+        model: 'gpt-4o-mini',
+        max_tokens: 800,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user',   content: userPrompt },
+        ],
       }),
     })
-    if (!videoRes.ok) {
-      const err = await videoRes.text()
-      throw new Error(`HeyGen video generate failed (${videoRes.status}): ${err}`)
-    }
-    const videoData = await videoRes.json() as {
-      error?: { code?: string; message?: string } | string
-      data?: { video_id: string }
-    }
-    const errMsg = typeof videoData.error === 'object' ? videoData.error?.message : videoData.error
-    if (videoData.error && typeof errMsg === 'string' && errMsg.includes('missing image dimensions')) {
-      return { videoId: '', stale: true }
-    }
-    if (videoData.error) throw new Error(`HeyGen video generate error: ${errMsg}`)
 
-    return { videoId: videoData.data!.video_id, stale: false }
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`OpenAI API error (${res.status}): ${err}`)
+    }
+
+    const data = await res.json() as { choices?: Array<{ message: { content: string } }> }
+    const content = data.choices?.[0]?.message?.content?.trim()
+    if (!content) throw new Error('OpenAI returned empty response')
+
+    const suggestions = JSON.parse(content) as string[]
+    if (!Array.isArray(suggestions) || suggestions.length === 0) {
+      throw new Error('Invalid suggestions format from OpenAI')
+    }
+
+    logger.info(`[AI] Generated ${suggestions.length} scene prompt suggestions`)
+    return suggestions
   },
 
   /**
-   * Claude API — improves a celebrity video script using AI.
+   * OpenAI — improves a celebrity video script using AI.
    * Falls back to returning the original script when the key is not set.
    */
   async improveScript(params: {

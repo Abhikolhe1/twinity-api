@@ -28,7 +28,8 @@ function generateRef(): string {
 
 export async function createJob(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { celebrityId, productType, purpose, templateId, script, tone, duration, aspectRatio, resolution, channels } = req.body
+    const { celebrityId, productType, purpose, templateId, script, tone, duration, aspectRatio, resolution, channels,
+            propImages, sceneNotes, backgroundImageUrl } = req.body
 
     const celeb = await Celebrity.findById(celebrityId)
     if (!celeb || !celeb.isActive) throw new AppError('Celebrity not found or inactive', 404)
@@ -52,6 +53,9 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
       channels: channels || [],
       estimatedPrice,
       statusHistory: [{ status: 'pending', timestamp: new Date() }],
+      propImages:         Array.isArray(propImages) && propImages.length ? propImages : undefined,
+      sceneNotes:         sceneNotes         || undefined,
+      backgroundImageUrl: backgroundImageUrl || undefined,
     })
 
     // Increment celebrity order count
@@ -224,6 +228,22 @@ export async function adminRejectJob(req: Request, res: Response, next: NextFunc
     }).catch(() => null)
 
     res.json({ success: true, data: job, message: 'Job rejected' })
+  } catch (err) {
+    next(err)
+  }
+}
+
+// Authenticated — generate scene prompt suggestions with AI
+export async function suggestScenePrompts(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { celebrityName, productType, purpose, script } = req.body as {
+      celebrityName: string; productType: string; purpose?: string; script?: string
+    }
+    if (!celebrityName?.trim()) throw new AppError('celebrityName is required', 400)
+    if (!productType?.trim()) throw new AppError('productType is required', 400)
+
+    const suggestions = await aiService.generateScenePrompts({ celebrityName, productType, purpose, script })
+    res.json({ success: true, suggestions })
   } catch (err) {
     next(err)
   }

@@ -9,7 +9,7 @@ import { logger } from '../config/logger'
 
 /**
  * If thumbnailUrl is a base64 data URL (set by the admin file picker), convert
- * it to JPEG and upload to S3. Always stores as .jpg so HeyGen can accept it.
+ * it to JPEG and upload to S3.
  */
 async function resolveThumbnailUrl(thumbnailUrl: string | undefined, slug: string): Promise<string | undefined> {
   if (!thumbnailUrl || !thumbnailUrl.startsWith('data:')) return thumbnailUrl

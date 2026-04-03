@@ -6,7 +6,8 @@ export interface ISettings extends Document {
   supportEmail: string
   adminEmail: string
   elevenLabsKey: string
-  heygenKey: string
+  higgsfieldKeyId: string
+  higgsfieldKeySecret: string
   openaiKey: string
   watermarkText: string
   watermarkOpacity: string
@@ -23,9 +24,10 @@ const SettingsSchema = new Schema<ISettings>(
     platformName:      { type: String, default: 'Twinity' },
     supportEmail:      { type: String, default: 'support@twinity.ai' },
     adminEmail:        { type: String, default: 'admin@twinity.ai' },
-    elevenLabsKey: { type: String, default: '' },
-    heygenKey:     { type: String, default: '' },
-    openaiKey:     { type: String, default: '' },
+    elevenLabsKey:  { type: String, default: '' },
+    higgsfieldKeyId:     { type: String, default: '' },
+    higgsfieldKeySecret: { type: String, default: '' },
+    openaiKey:      { type: String, default: '' },
     watermarkText:     { type: String, default: 'twinity.ai · PREVIEW' },
     watermarkOpacity:  { type: String, default: '0.35' },
     watermarkPosition: { type: String, default: 'Bottom Center' },
@@ -50,7 +52,8 @@ function maskKey(val: string): string {
 SettingsSchema.methods.toPublicJSON = function () {
   const obj = this.toObject()
   if (obj.elevenLabsKey)      obj.elevenLabsKey      = maskKey(obj.elevenLabsKey)
-  if (obj.heygenKey)          obj.heygenKey          = maskKey(obj.heygenKey)
+  if (obj.higgsfieldKeyId)     obj.higgsfieldKeyId     = maskKey(obj.higgsfieldKeyId)
+  if (obj.higgsfieldKeySecret) obj.higgsfieldKeySecret = maskKey(obj.higgsfieldKeySecret)
   if (obj.openaiKey)          obj.openaiKey          = maskKey(obj.openaiKey)
   if (obj.awsSecretAccessKey) obj.awsSecretAccessKey = maskKey(obj.awsSecretAccessKey)
   return obj

@@ -71,7 +71,7 @@ export const s3Service = {
 
   /**
    * Generate a pre-signed URL for a private S3 object.
-   * Use this when an external service (e.g. HeyGen) needs to download a private file.
+   * Use this when an external service (e.g. Higgsfield) needs to download a private file.
    * @param expiresIn  Seconds until the URL expires (default: 3600 = 1 hour)
    */
   async getPresignedUrl(bucket: string, key: string, expiresIn = 3600): Promise<string> {

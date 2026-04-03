@@ -17,7 +17,6 @@ export interface ICelebrity extends Document {
   thumbnailUrl?: string
   voiceModelId?: string
   trainingAudioUrl?: string   // fallback audio for queue when ElevenLabs is unavailable
-  heygenPhotoId?: string      // cached HeyGen talking_photo_id — avoids re-uploading image
   isActive: boolean
   isFeatured: boolean
   priceRange: {
@@ -50,7 +49,6 @@ const CelebritySchema = new Schema<ICelebrity>(
     thumbnailUrl:      { type: String },
     voiceModelId:      { type: String },
     trainingAudioUrl:  { type: String },
-    heygenPhotoId:     { type: String },
     isActive:      { type: Boolean, default: true },
     isFeatured:    { type: Boolean, default: false },
     priceRange: {

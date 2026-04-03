@@ -10,7 +10,8 @@ const CACHE_TTL_MS = 30_000
 
 interface CachedSettings {
   elevenLabsKey: string
-  heygenKey: string
+  higgsfieldKeyId: string
+  higgsfieldKeySecret: string
   openaiKey: string
   watermarkText: string
   watermarkOpacity: string
@@ -34,9 +35,10 @@ async function load(): Promise<CachedSettings> {
     const doc = await Settings.findOne({ key: 'global' })
     const d = (doc?.toObject() ?? {}) as Record<string, string>
     _cache = {
-      elevenLabsKey: d.elevenLabsKey || env.externalApis.elevenLabs || '',
-      heygenKey:     d.heygenKey     || env.externalApis.heygen     || '',
-      openaiKey:     d.openaiKey     || env.externalApis.openai     || '',
+      elevenLabsKey:  d.elevenLabsKey  || env.externalApis.elevenLabs  || '',
+      higgsfieldKeyId:     d.higgsfieldKeyId     || env.externalApis.higgsfieldKeyId     || '',
+      higgsfieldKeySecret: d.higgsfieldKeySecret || env.externalApis.higgsfieldKeySecret || '',
+      openaiKey:      d.openaiKey      || env.externalApis.openai      || '',
       watermarkText:     d.watermarkText     || 'twinity.ai · PREVIEW',
       watermarkOpacity:  d.watermarkOpacity  || '0.35',
       watermarkPosition: d.watermarkPosition || 'Bottom Center',
@@ -51,9 +53,10 @@ async function load(): Promise<CachedSettings> {
   } catch (err) {
     logger.error('[Settings] Failed to load from DB, using env fallback:', err)
     _cache = {
-      elevenLabsKey: env.externalApis.elevenLabs || '',
-      heygenKey:     env.externalApis.heygen     || '',
-      openaiKey:     env.externalApis.openai     || '',
+      elevenLabsKey:  env.externalApis.elevenLabs  || '',
+      higgsfieldKeyId:     env.externalApis.higgsfieldKeyId     || '',
+      higgsfieldKeySecret: env.externalApis.higgsfieldKeySecret || '',
+      openaiKey:      env.externalApis.openai      || '',
       watermarkText:     'twinity.ai · PREVIEW',
       watermarkOpacity:  '0.35',
       watermarkPosition: 'Bottom Center',
