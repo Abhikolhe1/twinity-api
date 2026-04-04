@@ -308,6 +308,9 @@ export const aiService = {
     }
     if (params.callbackUrl) body.webhookUrl = params.callbackUrl
 
+    if (!params.videoUrl) throw new Error('Sync.so: videoUrl is empty — Higgsfield video URL not available')
+    if (!params.audioUrl) throw new Error('Sync.so: audioUrl is empty — ElevenLabs audio URL not available')
+
     logger.info(`[AI] Sync.so request — video: ${params.videoUrl.slice(0, 80)}`)
     logger.info(`[AI] Sync.so request — audio: ${params.audioUrl.slice(0, 80)}`)
     logger.info(`[AI] Sync.so webhook: ${params.callbackUrl ?? '[none]'}`)
