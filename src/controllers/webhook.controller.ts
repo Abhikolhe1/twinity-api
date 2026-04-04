@@ -32,7 +32,11 @@ function verifySyncLabsSignature(req: Request & { rawBody?: Buffer }, secret: st
     return false
   }
 
-  const parts = Object.fromEntries(header.split(',').map(p => p.split('=')))
+  const parts: Record<string, string> = {}
+  for (const part of header.split(',')) {
+    const idx = part.indexOf('=')
+    if (idx !== -1) parts[part.slice(0, idx).trim()] = part.slice(idx + 1).trim()
+  }
   const timestamp = parts['t']
   const signature = parts['s']
   if (!timestamp || !signature) {
@@ -147,14 +151,6 @@ export async function higgsfieldWebhook(req: Request, res: Response): Promise<vo
 
 // ── Sync.so webhook — lip-sync completion ─────────────────────────────────────
 
-interface SyncLabsWebhookPayload {
-  id?: string
-  status?: string
-  outputUrl?: string
-  error?: string
-  error_code?: string
-}
-
 export async function syncLabsWebhook(req: Request & { rawBody?: Buffer }, res: Response): Promise<void> {
   try {
     logger.info(`[Webhook] Sync.so raw headers: ${JSON.stringify(req.headers)}`)
@@ -166,19 +162,17 @@ export async function syncLabsWebhook(req: Request & { rawBody?: Buffer }, res: 
       return
     }
 
-    const payload = req.body as SyncLabsWebhookPayload
+    const payload  = req.body as Record<string, unknown>
+    const jobId    = (payload.id       ?? '') as string
+    const status   = (payload.status   ?? '') as string
+    const videoUrl = (payload.outputUrl ?? '') as string
+    const errorMsg = (payload.error    ?? '') as string
 
-    const jobId    = payload.id ?? ''
-    const status   = payload.status ?? ''
-    const videoUrl = payload.outputUrl ?? ''
-    const errorMsg = payload.error ?? payload.error_code ?? ''
+    logger.info(`[Webhook] Sync.so event — status=${status}, id=${jobId}, outputUrl=${videoUrl || '[empty]'}`)
 
-    logger.info(`[Webhook] Sync.so event — status=${status}, id=${jobId}`)
+    const outcome = status === 'COMPLETED' ? 'success' : (status === 'FAILED' || status === 'REJECTED') ? 'failure' : null
 
-    const isSuccess = status === 'COMPLETED'
-    const isFailure = status === 'FAILED' || status === 'REJECTED'
-
-    if (!isSuccess && !isFailure) {
+    if (!outcome) {
       logger.info(`[Webhook] Sync.so unhandled status: ${status}`)
       res.json({ success: true })
       return
@@ -191,7 +185,7 @@ export async function syncLabsWebhook(req: Request & { rawBody?: Buffer }, res: 
       return
     }
 
-    if (isSuccess) {
+    if (outcome === 'success') {
       job.finalVideoUrl  = videoUrl
       job.watermarkedUrl = videoUrl
       job.previewUrl     = videoUrl
@@ -204,7 +198,7 @@ export async function syncLabsWebhook(req: Request & { rawBody?: Buffer }, res: 
       if (adminEmail) {
         emailService.sendNewLeadNotification({ email: adminEmail } as any).catch(() => null)
       }
-    } else {
+    } else if (outcome === 'failure') {
       job.status       = 'failed'
       job.errorMessage = errorMsg || 'Sync.so lip-sync failed'
       job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
