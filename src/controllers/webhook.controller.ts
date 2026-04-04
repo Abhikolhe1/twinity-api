@@ -51,25 +51,6 @@ function verifySyncLabsSignature(req: Request & { rawBody?: Buffer }, secret: st
 
 // ── Higgsfield webhook — video generation events ──────────────────────────────
 
-interface HiggsfieldWebhookPayload {
-  // Higgsfield standard payload shape (docs.higgsfield.ai)
-  status?: string
-  request_id?: string
-  status_url?: string    // fetch this when video.url is missing from the webhook body
-  video?: { url?: string }
-  error?: string
-  // Legacy / alternate shapes (kept for resilience)
-  event?: string
-  id?: string
-  video_url?: string
-  data?: {
-    id?: string
-    status?: string
-    video_url?: string
-    error?: string
-  }
-}
-
 /** Fetch the Higgsfield status URL to retrieve the video URL when the webhook body omits it. */
 async function fetchHiggsfieldVideoUrl(statusUrl: string): Promise<string> {
   const { higgsfieldKeyId, higgsfieldKeySecret } = await settingsService.get()
@@ -77,22 +58,25 @@ async function fetchHiggsfieldVideoUrl(statusUrl: string): Promise<string> {
     headers: { 'Authorization': `Key ${higgsfieldKeyId}:${higgsfieldKeySecret}` },
   })
   if (!res.ok) throw new Error(`Higgsfield status fetch failed (${res.status})`)
-  const data = await res.json() as { video?: { url?: string } }
-  const url = data.video?.url ?? ''
+  const data = await res.json() as Record<string, unknown>
+  const url = (data.video as any)?.url ?? ''
   if (!url) throw new Error('Higgsfield status response has no video.url')
-  return url
+  return url as string
 }
 
 export async function higgsfieldWebhook(req: Request, res: Response): Promise<void> {
   try {
-    const payload = req.body as HiggsfieldWebhookPayload
-    logger.info('[Webhook] Higgsfield raw payload:', JSON.stringify(payload))
+    const payload = req.body as Record<string, unknown>
+    logger.info(`[Webhook] Higgsfield raw payload: ${JSON.stringify(payload)}`)
 
-    const jobId     = payload.request_id ?? payload.data?.id ?? payload.id ?? ''
-    let   videoUrl  = payload.video?.url ?? payload.video_url ?? payload.data?.video_url ?? ''
-    const statusUrl = payload.status_url ?? ''
-    const errorMsg  = payload.error ?? payload.data?.error ?? ''
-    const status    = payload.status ?? payload.event ?? payload.data?.status ?? ''
+    const jobId    = (payload.request_id ?? (payload.data as any)?.id ?? payload.id ?? '') as string
+    let   videoUrl = ((payload.video as any)?.url ?? payload.video_url ?? (payload.data as any)?.video_url ?? '') as string
+    const errorMsg = (payload.error ?? (payload.data as any)?.error ?? '') as string
+    const status   = (payload.status ?? payload.event ?? (payload.data as any)?.status ?? '') as string
+
+    // Construct status_url from request_id when Higgsfield omits it from the webhook body
+    const statusUrl = (payload.status_url as string | undefined)
+      ?? (jobId ? `https://platform.higgsfield.ai/requests/${jobId}/status` : '')
 
     logger.info(`[Webhook] Higgsfield event — status=${status}, request_id=${jobId}, videoUrl=${videoUrl || '[empty]'}, status_url=${statusUrl || '[none]'}`)
 
