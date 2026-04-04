@@ -195,11 +195,21 @@ async function processJob(jobId: string): Promise<void> {
     if (!celeb.voiceModelId) throw new Error(`Celebrity ${celeb.name} has no ElevenLabs voiceModelId`)
     if (!settings.elevenLabsKey) throw new Error('ElevenLabs API key not configured')
 
-    const voice = await aiService.generateVoice(celeb.voiceModelId, job.script, celeb.slug)
+    // Higgsfield max video duration is 10s — limit script to ~25 words (~10s at normal pace)
+    const MAX_WORDS = 25
+    const scriptWords = job.script.trim().split(/\s+/)
+    const ttsScript = scriptWords.length > MAX_WORDS
+      ? scriptWords.slice(0, MAX_WORDS).join(' ')
+      : job.script
+    if (scriptWords.length > MAX_WORDS) {
+      logger.warn(`[Queue] Job ${job.referenceId} — script truncated from ${scriptWords.length} to ${MAX_WORDS} words for Higgsfield duration limit`)
+    }
+
+    const voice = await aiService.generateVoice(celeb.voiceModelId, ttsScript, celeb.slug)
     job.voiceJobId    = voice.jobId
     job.voiceAudioUrl = voice.audioUrl
-    const voiceAudioUrl  = voice.audioUrl
-    const audioDuration  = voice.durationSecs
+    const voiceAudioUrl = voice.audioUrl
+    const audioDuration = Math.min(voice.durationSecs, 10)  // hard cap at Higgsfield max
     logger.info(`[Queue] Job ${job.referenceId} — ElevenLabs voice generated: ${voice.audioUrl} (${audioDuration}s)`)
 
     // ── Step 3: Higgsfield lipsync (image + audio → lip-synced video) ──
