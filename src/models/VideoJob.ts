@@ -25,6 +25,8 @@ export interface IVideoJob extends Document {
   watermarkedUrl?: string
   aiJobId?: string             // request_id from Higgsfield
   higgsfieldStatusUrl?: string // polling URL returned by Higgsfield on submission
+  rawVideoUrl?: string         // Higgsfield output before lip-sync
+  syncLabsJobId?: string       // Sync.so generation ID (lip-sync step)
   voiceJobId?: string          // jobId from ElevenLabs TTS
   voiceAudioUrl?: string       // S3 URL of generated voice audio
   // Scene settings (customer-provided context for video generation)
@@ -67,6 +69,8 @@ const VideoJobSchema = new Schema<IVideoJob>(
     watermarkedUrl:  { type: String },
     aiJobId:               { type: String },
     higgsfieldStatusUrl:   { type: String },
+    rawVideoUrl:           { type: String },
+    syncLabsJobId:         { type: String },
     voiceJobId:            { type: String },
     voiceAudioUrl:      { type: String },
     propImages:         [{ type: String }],

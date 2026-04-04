@@ -21,6 +21,8 @@ const SECRET_FIELDS = [
   'higgsfieldKeyId',
   'higgsfieldKeySecret',
   'openaiKey',
+  'syncLabsKey',
+  'syncLabsWebhookSecret',
   'awsSecretAccessKey',
 ] as const
 

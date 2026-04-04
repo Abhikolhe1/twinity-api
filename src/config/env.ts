@@ -40,6 +40,7 @@ export const env = {
     higgsfieldKeyId:     process.env.HIGGSFIELD_KEY_ID     || '',
     higgsfieldKeySecret: process.env.HIGGSFIELD_KEY_SECRET || '',
     openai:      process.env.OPENAI_API_KEY      || '',
+    syncLabsKey: process.env.SYNC_LABS_KEY       || '',
   },
   serverUrl: process.env.SERVER_URL || '',
   cors: {

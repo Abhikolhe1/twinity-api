@@ -57,6 +57,11 @@ const HIGGSFIELD_BASE = 'https://platform.higgsfield.ai'
 
 export interface HiggsfieldResult { jobId: string; statusUrl?: string; status: 'submitted' | 'stub' }
 
+// ─── Sync.so API ──────────────────────────────────────────────────────────────
+const SYNCLABS_BASE = 'https://api.sync.so/v2'
+
+export interface SyncLabsResult { jobId: string; status: 'submitted' | 'stub' }
+
 // ─── OpenAI API ───────────────────────────────────────────────────────────────
 const OPENAI_BASE = 'https://api.openai.com'
 
@@ -270,6 +275,59 @@ export const aiService = {
     if (!jobId) throw new Error(`Higgsfield: no job ID in response: ${JSON.stringify(data)}`)
     logger.info(`[AI] Higgsfield image-to-video job queued: request_id=${jobId}, status_url=${statusUrl ?? 'none'}`)
     return { jobId, statusUrl, status: 'submitted' }
+  },
+
+  /**
+   * Sync.so — lip-sync a video to an audio track.
+   * Takes the Higgsfield-generated video + ElevenLabs audio and returns a lip-synced video.
+   * Completion is delivered via POST {SERVER_URL}/api/webhooks/synclabs (or polled).
+   *
+   * Auth: x-api-key header
+   * POST https://api.sync.so/v2/generate
+   */
+  async syncLabsLipSync(params: {
+    videoUrl: string
+    audioUrl: string
+    referenceId: string
+    callbackUrl?: string
+  }): Promise<SyncLabsResult> {
+    logger.info(`[AI] Sync.so lip-sync: refId=${params.referenceId}`)
+    const { syncLabsKey } = await settingsService.get()
+
+    if (!syncLabsKey) {
+      logger.warn('[AI] Sync.so key not set — skipping lip-sync (using raw Higgsfield video)')
+      return { jobId: `stub-synclabs-${Date.now()}`, status: 'stub' }
+    }
+
+    const body: Record<string, unknown> = {
+      model: 'lipsync-2',
+      input: [
+        { type: 'video', url: params.videoUrl },
+        { type: 'audio', url: params.audioUrl },
+      ],
+    }
+    if (params.callbackUrl) body.webhookUrl = params.callbackUrl
+
+    logger.info(`[AI] Sync.so request — video: ${params.videoUrl.slice(0, 80)}`)
+    logger.info(`[AI] Sync.so request — audio: ${params.audioUrl.slice(0, 80)}`)
+    logger.info(`[AI] Sync.so webhook: ${params.callbackUrl ?? '[none]'}`)
+
+    const res = await fetch(`${SYNCLABS_BASE}/generate`, {
+      method: 'POST',
+      headers: {
+        'x-api-key': syncLabsKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`Sync.so lip-sync failed (${res.status}): ${err}`)
+    }
+    const data = await res.json() as { id?: string; status?: string }
+    if (!data.id) throw new Error(`Sync.so: no id in response: ${JSON.stringify(data)}`)
+    logger.info(`[AI] Sync.so job submitted: id=${data.id}`)
+    return { jobId: data.id, status: 'submitted' }
   },
 
   /**

@@ -13,6 +13,8 @@ interface CachedSettings {
   higgsfieldKeyId: string
   higgsfieldKeySecret: string
   openaiKey: string
+  syncLabsKey: string
+  syncLabsWebhookSecret: string
   watermarkText: string
   watermarkOpacity: string
   watermarkPosition: string
@@ -39,6 +41,8 @@ async function load(): Promise<CachedSettings> {
       higgsfieldKeyId:     d.higgsfieldKeyId     || env.externalApis.higgsfieldKeyId     || '',
       higgsfieldKeySecret: d.higgsfieldKeySecret || env.externalApis.higgsfieldKeySecret || '',
       openaiKey:      d.openaiKey      || env.externalApis.openai      || '',
+      syncLabsKey:           d.syncLabsKey           || env.externalApis.syncLabsKey  || '',
+      syncLabsWebhookSecret: d.syncLabsWebhookSecret || '',
       watermarkText:     d.watermarkText     || 'twinity.ai · PREVIEW',
       watermarkOpacity:  d.watermarkOpacity  || '0.35',
       watermarkPosition: d.watermarkPosition || 'Bottom Center',
@@ -57,6 +61,8 @@ async function load(): Promise<CachedSettings> {
       higgsfieldKeyId:     env.externalApis.higgsfieldKeyId     || '',
       higgsfieldKeySecret: env.externalApis.higgsfieldKeySecret || '',
       openaiKey:      env.externalApis.openai      || '',
+      syncLabsKey:           env.externalApis.syncLabsKey  || '',
+      syncLabsWebhookSecret: '',
       watermarkText:     'twinity.ai · PREVIEW',
       watermarkOpacity:  '0.35',
       watermarkPosition: 'Bottom Center',

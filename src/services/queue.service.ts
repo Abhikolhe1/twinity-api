@@ -11,7 +11,7 @@
  * Stub mode (no Higgsfield key): job advances directly to review with audio preview URL.
  */
 import { logger } from '../config/logger'
-import { VideoJob } from '../models/VideoJob'
+import { VideoJob, IVideoJob } from '../models/VideoJob'
 import { Celebrity } from '../models/Celebrity'
 import { aiService } from './ai.service'
 import { s3Service } from './s3.service'
@@ -27,51 +27,126 @@ interface HiggsfieldStatusResponse {
   error?: string
 }
 
-async function pollInProgressJobs(): Promise<void> {
-  try {
-    const jobs = await VideoJob.find({ status: 'in-progress', higgsfieldStatusUrl: { $exists: true, $ne: '' } })
-    if (jobs.length === 0) return
+interface SyncLabsStatusResponse {
+  id?: string
+  status?: string
+  outputUrl?: string
+  error?: string
+  error_code?: string
+}
 
-    logger.info(`[Queue] Polling ${jobs.length} in-progress job(s)`)
-    const { higgsfieldKeyId, higgsfieldKeySecret } = await settingsService.get()
-    if (!higgsfieldKeyId || !higgsfieldKeySecret) return
+async function pollHiggsfieldJobs(
+  jobs: IVideoJob[],
+  keyId: string,
+  keySecret: string,
+): Promise<void> {
+  for (const job of jobs) {
+    if (!job.higgsfieldStatusUrl) continue
+    try {
+      const res = await fetch(job.higgsfieldStatusUrl, {
+        headers: { 'Authorization': `Key ${keyId}:${keySecret}` },
+      })
+      if (!res.ok) {
+        logger.warn(`[Queue] Higgsfield poll ${res.status} for job ${job.referenceId}`)
+        continue
+      }
+      const data = await res.json() as HiggsfieldStatusResponse
+      logger.info(`[Queue] Higgsfield poll ${job.referenceId}: status=${data.status}`)
 
-    for (const job of jobs) {
-      try {
-        const res = await fetch(job.higgsfieldStatusUrl!, {
-          headers: { 'Authorization': `Key ${higgsfieldKeyId}:${higgsfieldKeySecret}` },
-        })
-        if (!res.ok) {
-          logger.warn(`[Queue] Poll status ${res.status} for job ${job.referenceId}`)
-          continue
-        }
-        const data = await res.json() as HiggsfieldStatusResponse
-        logger.info(`[Queue] Poll result for ${job.referenceId}: status=${data.status}`)
+      if (data.status === 'completed') {
+        const videoUrl = data.video?.url ?? ''
+        if (!videoUrl) { logger.warn(`[Queue] Higgsfield poll: no video URL for ${job.referenceId}`); continue }
 
-        if (data.status === 'completed') {
-          const videoUrl = data.video?.url ?? ''
-          if (!videoUrl) {
-            logger.warn(`[Queue] Poll: completed but no video URL for ${job.referenceId}`)
-            continue
-          }
+        job.rawVideoUrl = videoUrl
+        const { syncLabsKey } = await settingsService.get()
+
+        if (syncLabsKey && job.voiceAudioUrl) {
+          const callbackUrl = env.serverUrl ? `${env.serverUrl}/api/webhooks/synclabs` : undefined
+          const lipSync = await aiService.syncLabsLipSync({
+            videoUrl, audioUrl: job.voiceAudioUrl, referenceId: job.referenceId, callbackUrl,
+          })
+          job.syncLabsJobId = lipSync.jobId
+          logger.info(`[Queue] Sync.so queued via poll: id=${lipSync.jobId}, job=${job.referenceId}`)
+        } else {
           job.finalVideoUrl  = videoUrl
           job.watermarkedUrl = videoUrl
           job.previewUrl     = videoUrl
           job.status         = 'review'
           job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'Higgsfield video complete (poll)' })
-          await job.save()
-          logger.info(`[Queue] Job ${job.referenceId} → review via poll, url=${videoUrl}`)
-        } else if (data.status === 'failed' || data.status === 'error') {
-          job.status       = 'failed'
-          job.errorMessage = data.error ?? 'Higgsfield render failed'
-          job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
-          await job.save()
-          logger.warn(`[Queue] Job ${job.referenceId} → failed via poll: ${job.errorMessage}`)
+          logger.info(`[Queue] Job ${job.referenceId} → review via Higgsfield poll`)
         }
-        // 'processing' / 'pending' / other — leave as in-progress, will poll again
-      } catch (err) {
-        logger.warn(`[Queue] Poll error for job ${job.referenceId}:`, err)
+        await job.save()
+      } else if (data.status === 'failed' || data.status === 'error') {
+        job.status = 'failed'
+        job.errorMessage = data.error ?? 'Higgsfield render failed'
+        job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
+        await job.save()
+        logger.warn(`[Queue] Job ${job.referenceId} → failed via Higgsfield poll`)
       }
+    } catch (err) {
+      logger.warn(`[Queue] Higgsfield poll error for job ${job.referenceId}:`, err)
+    }
+  }
+}
+
+async function pollSyncLabsJobs(
+  jobs: IVideoJob[],
+  syncLabsKey: string,
+): Promise<void> {
+  for (const job of jobs) {
+    if (!job.syncLabsJobId) continue
+    try {
+      const res = await fetch(`https://api.sync.so/v2/generate/${job.syncLabsJobId}`, {
+        headers: { 'x-api-key': syncLabsKey },
+      })
+      if (!res.ok) {
+        logger.warn(`[Queue] Sync.so poll ${res.status} for job ${job.referenceId}`)
+        continue
+      }
+      const data = await res.json() as SyncLabsStatusResponse
+      logger.info(`[Queue] Sync.so poll ${job.referenceId}: status=${data.status}`)
+
+      if (data.status === 'COMPLETED') {
+        const videoUrl = data.outputUrl ?? ''
+        if (!videoUrl) { logger.warn(`[Queue] Sync.so poll: no outputUrl for ${job.referenceId}`); continue }
+        job.finalVideoUrl  = videoUrl
+        job.watermarkedUrl = videoUrl
+        job.previewUrl     = videoUrl
+        job.status         = 'review'
+        job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'Sync.so lip-sync complete (poll)' })
+        await job.save()
+        logger.info(`[Queue] Job ${job.referenceId} → review via Sync.so poll, url=${videoUrl}`)
+      } else if (data.status === 'FAILED' || data.status === 'REJECTED') {
+        job.status = 'failed'
+        job.errorMessage = data.error ?? data.error_code ?? 'Sync.so lip-sync failed'
+        job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
+        await job.save()
+        logger.warn(`[Queue] Job ${job.referenceId} → failed via Sync.so poll`)
+      }
+    } catch (err) {
+      logger.warn(`[Queue] Sync.so poll error for job ${job.referenceId}:`, err)
+    }
+  }
+}
+
+async function pollInProgressJobs(): Promise<void> {
+  try {
+    const jobs = await VideoJob.find({ status: 'in-progress' })
+    if (jobs.length === 0) return
+
+    logger.info(`[Queue] Polling ${jobs.length} in-progress job(s)`)
+    const settings = await settingsService.get()
+
+    // Jobs waiting for Higgsfield (have status URL, no rawVideoUrl yet)
+    const higgsfieldJobs = jobs.filter(j => j.higgsfieldStatusUrl && !j.rawVideoUrl)
+    if (higgsfieldJobs.length > 0 && settings.higgsfieldKeyId && settings.higgsfieldKeySecret) {
+      await pollHiggsfieldJobs(higgsfieldJobs, settings.higgsfieldKeyId, settings.higgsfieldKeySecret)
+    }
+
+    // Jobs waiting for Sync.so (have syncLabsJobId, no finalVideoUrl yet)
+    const syncLabsJobs = jobs.filter(j => j.syncLabsJobId && !j.finalVideoUrl)
+    if (syncLabsJobs.length > 0 && settings.syncLabsKey) {
+      await pollSyncLabsJobs(syncLabsJobs, settings.syncLabsKey)
     }
   } catch (err) {
     logger.error('[Queue] pollInProgressJobs error:', err)

@@ -9,6 +9,8 @@ export interface ISettings extends Document {
   higgsfieldKeyId: string
   higgsfieldKeySecret: string
   openaiKey: string
+  syncLabsKey: string
+  syncLabsWebhookSecret: string
   watermarkText: string
   watermarkOpacity: string
   watermarkPosition: string
@@ -28,6 +30,8 @@ const SettingsSchema = new Schema<ISettings>(
     higgsfieldKeyId:     { type: String, default: '' },
     higgsfieldKeySecret: { type: String, default: '' },
     openaiKey:      { type: String, default: '' },
+    syncLabsKey:            { type: String, default: '' },
+    syncLabsWebhookSecret:  { type: String, default: '' },
     watermarkText:     { type: String, default: 'twinity.ai · PREVIEW' },
     watermarkOpacity:  { type: String, default: '0.35' },
     watermarkPosition: { type: String, default: 'Bottom Center' },
@@ -55,6 +59,8 @@ SettingsSchema.methods.toPublicJSON = function () {
   if (obj.higgsfieldKeyId)     obj.higgsfieldKeyId     = maskKey(obj.higgsfieldKeyId)
   if (obj.higgsfieldKeySecret) obj.higgsfieldKeySecret = maskKey(obj.higgsfieldKeySecret)
   if (obj.openaiKey)          obj.openaiKey          = maskKey(obj.openaiKey)
+  if (obj.syncLabsKey)               obj.syncLabsKey               = maskKey(obj.syncLabsKey)
+  if (obj.syncLabsWebhookSecret)     obj.syncLabsWebhookSecret     = maskKey(obj.syncLabsWebhookSecret)
   if (obj.awsSecretAccessKey) obj.awsSecretAccessKey = maskKey(obj.awsSecretAccessKey)
   return obj
 }
