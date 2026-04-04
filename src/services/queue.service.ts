@@ -198,8 +198,9 @@ async function processJob(jobId: string): Promise<void> {
     const voice = await aiService.generateVoice(celeb.voiceModelId, job.script, celeb.slug)
     job.voiceJobId    = voice.jobId
     job.voiceAudioUrl = voice.audioUrl
-    const voiceAudioUrl = voice.audioUrl
-    logger.info(`[Queue] Job ${job.referenceId} — ElevenLabs voice generated: ${voice.audioUrl}`)
+    const voiceAudioUrl  = voice.audioUrl
+    const audioDuration  = voice.durationSecs
+    logger.info(`[Queue] Job ${job.referenceId} — ElevenLabs voice generated: ${voice.audioUrl} (${audioDuration}s)`)
 
     // ── Step 3: Higgsfield lipsync (image + audio → lip-synced video) ──
     if (!celeb.thumbnailUrl) throw new Error(`Celebrity ${celeb.name} has no thumbnailUrl — upload a photo in the admin panel`)
@@ -220,11 +221,12 @@ async function processJob(jobId: string): Promise<void> {
     logger.info(`[Queue] Job ${job.referenceId} — audio_url: ${voiceAudioUrl}`)
 
     const render = await aiService.higgsfieldVideoGenerate({
-      audioUrl:    voiceAudioUrl,
-      imageUrl:    imageUrl!,
-      aspectRatio: job.aspectRatio,
-      referenceId: job.referenceId,
-      script:      prompt,
+      audioUrl:     voiceAudioUrl,
+      imageUrl:     imageUrl!,
+      aspectRatio:  job.aspectRatio,
+      referenceId:  job.referenceId,
+      script:       prompt,
+      durationSecs: audioDuration,
       callbackUrl,
     })
 

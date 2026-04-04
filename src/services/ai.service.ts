@@ -13,7 +13,7 @@ import { logger } from '../config/logger'
 import { settingsService } from './settings.service'
 import { s3Service } from './s3.service'
 
-export interface VoiceCloneResult   { jobId: string; audioUrl: string }
+export interface VoiceCloneResult   { jobId: string; audioUrl: string; durationSecs: number }
 export interface VoiceCloneIdResult { voiceId: string }
 
 // ─── ElevenLabs ───────────────────────────────────────────────────────────────
@@ -82,30 +82,36 @@ export const aiService = {
 
     if (!elevenLabsKey) {
       logger.warn('[AI] ElevenLabs key not set — returning stub')
-      return { jobId: `stub-voice-${Date.now()}`, audioUrl: 'https://stub-audio.mp3' }
+      return { jobId: `stub-voice-${Date.now()}`, audioUrl: 'https://stub-audio.mp3', durationSecs: 30 }
     }
 
-    const res = await fetch(`${ELEVENLABS_BASE}/text-to-speech/${celebrityVoiceId}`, {
+    const res = await fetch(`${ELEVENLABS_BASE}/text-to-speech/${celebrityVoiceId}/with-timestamps`, {
       method: 'POST',
       headers: { 'xi-api-key': elevenLabsKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: script, model_id: 'eleven_multilingual_v2' }),
     })
     if (!res.ok) throw new Error(`ElevenLabs failed (${res.status})`)
 
+    const data = await res.json() as {
+      audio_base64: string
+      alignment: { character_end_times_seconds: number[] }
+    }
+
+    const audioBuffer = Buffer.from(data.audio_base64, 'base64')
+    const endTimes    = data.alignment?.character_end_times_seconds ?? []
+    const durationSecs = endTimes.length > 0 ? Math.ceil(endTimes[endTimes.length - 1]) : 30
+    logger.info(`[AI] ElevenLabs audio duration: ${durationSecs}s`)
+
     const jobId = `el-${Date.now()}`
-    const audioBuffer = Buffer.from(await res.arrayBuffer())
     const { s3Bucket } = await settingsService.get()
     const key = `celebrities/${celebSlug}/generated-audio/${jobId}.mp3`
     const upload = await s3Service.upload(s3Bucket, key, audioBuffer, 'audio/mpeg')
-    // Generate a pre-signed URL so Higgsfield can download the private S3 object.
-    // Valid for 2 hours — enough time for Higgsfield to process the job.
-    // Pre-sign the S3 URL so Higgsfield can download the private audio object (valid 2 hours)
     const audioUrl = upload.stub
       ? upload.url
       : await s3Service.getPresignedUrl(s3Bucket, upload.key, 7200)
 
     logger.info(`[AI] ElevenLabs audio uploaded: ${upload.url}`)
-    return { jobId, audioUrl }
+    return { jobId, audioUrl, durationSecs }
   },
 
   /**
@@ -234,6 +240,7 @@ export const aiService = {
     aspectRatio: string
     referenceId: string
     script: string
+    durationSecs?: number
     callbackUrl?: string
   }): Promise<HiggsfieldResult> {
     logger.info(`[AI] Higgsfield image-to-video: refId=${params.referenceId}`)
@@ -248,7 +255,8 @@ export const aiService = {
       image_url: params.imageUrl,
       prompt:    params.script,
     }
-    if (params.audioUrl) body.audio_url = params.audioUrl
+    if (params.audioUrl)    body.audio_url = params.audioUrl
+    if (params.durationSecs) body.duration  = params.durationSecs
 
     const endpoint = new URL(`${HIGGSFIELD_BASE}/bytedance/seedance/v1/pro/image-to-video`)
     if (params.callbackUrl) endpoint.searchParams.set('hf_webhook', params.callbackUrl)
@@ -300,7 +308,7 @@ export const aiService = {
     }
 
     const body: Record<string, unknown> = {
-      model: 'lipsync-2',
+      model: 'lipsync-2-pro',
       input: [
         { type: 'video', url: params.videoUrl },
         { type: 'audio', url: params.audioUrl },
