@@ -157,6 +157,9 @@ interface SyncLabsWebhookPayload {
 
 export async function syncLabsWebhook(req: Request & { rawBody?: Buffer }, res: Response): Promise<void> {
   try {
+    logger.info(`[Webhook] Sync.so raw headers: ${JSON.stringify(req.headers)}`)
+    logger.info(`[Webhook] Sync.so raw payload: ${JSON.stringify(req.body)}`)
+
     const { syncLabsWebhookSecret } = await settingsService.get()
     if (!verifySyncLabsSignature(req, syncLabsWebhookSecret)) {
       res.status(401).json({ success: false, message: 'Invalid signature' })
@@ -164,7 +167,6 @@ export async function syncLabsWebhook(req: Request & { rawBody?: Buffer }, res: 
     }
 
     const payload = req.body as SyncLabsWebhookPayload
-    logger.info('[Webhook] Sync.so raw payload:', JSON.stringify(payload))
 
     const jobId    = payload.id ?? ''
     const status   = payload.status ?? ''
