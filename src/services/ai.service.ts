@@ -412,8 +412,8 @@ export const aiService = {
       return params.script
     }
 
-    const systemPrompt = 'You are a professional copywriter specialising in celebrity video advertisements. Improve scripts to be more engaging, natural, and persuasive while preserving the core message. Return ONLY the improved script text with no preamble, explanation, or formatting marks.'
-    const userPrompt = `Celebrity: ${params.celebrityName}\nProduct type: ${params.productType}${params.purpose ? `\nPurpose: ${params.purpose}` : ''}\n\nScript to improve:\n${params.script}`
+    const systemPrompt = 'You are a professional copywriter specialising in celebrity video advertisements. Improve scripts to be more engaging, natural, and persuasive while preserving the core message. CRITICAL: the output MUST be 25 words or fewer — this is a hard limit imposed by the video generation platform. Count every word carefully before responding. Return ONLY the improved script text with no preamble, explanation, or formatting marks.'
+    const userPrompt = `Celebrity: ${params.celebrityName}\nProduct type: ${params.productType}${params.purpose ? `\nPurpose: ${params.purpose}` : ''}\n\nScript to improve (must stay within 25 words):\n${params.script}`
 
     logger.info(`[AI] Improving script via OpenAI for celebrity=${params.celebrityName}`)
     const res = await fetch(`${OPENAI_BASE}/v1/chat/completions`, {
@@ -424,7 +424,7 @@ export const aiService = {
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
-        max_tokens: 1024,
+        max_tokens: 60,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user',   content: userPrompt },
@@ -441,7 +441,15 @@ export const aiService = {
     const improved = data.choices?.[0]?.message?.content?.trim()
     if (!improved) throw new Error('OpenAI returned empty response')
 
+    // Hard-enforce 25-word limit as a safety net in case the model goes over
+    const words = improved.split(/\s+/)
+    const result = words.length > 25 ? words.slice(0, 25).join(' ') : improved
+
+    if (words.length > 25) {
+      logger.warn(`[AI] Improved script exceeded 25 words (${words.length}) — trimmed`)
+    }
+
     logger.info('[AI] Script improved successfully')
-    return improved
+    return result
   },
 }
