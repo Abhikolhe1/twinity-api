@@ -36,11 +36,10 @@ export const env = {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
   },
   externalApis: {
-    elevenLabs:  process.env.ELEVENLABS_API_KEY  || '',
-    higgsfieldKeyId:     process.env.HIGGSFIELD_KEY_ID     || '',
-    higgsfieldKeySecret: process.env.HIGGSFIELD_KEY_SECRET || '',
-    openai:      process.env.OPENAI_API_KEY      || '',
-    syncLabsKey: process.env.SYNC_LABS_KEY       || '',
+    elevenLabs:    process.env.ELEVENLABS_API_KEY  || '',
+    creatifyApiId: process.env.CREATIFY_API_ID     || '',
+    creatifyApiKey: process.env.CREATIFY_API_KEY   || '',
+    openai:        process.env.OPENAI_API_KEY      || '',
   },
   serverUrl: process.env.SERVER_URL || '',
   cors: {

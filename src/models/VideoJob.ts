@@ -23,11 +23,8 @@ export interface IVideoJob extends Document {
   previewUrl?: string
   finalVideoUrl?: string
   watermarkedUrl?: string
-  aiJobId?: string             // request_id from Higgsfield
-  higgsfieldStatusUrl?: string // polling URL returned by Higgsfield on submission
-  rawVideoUrl?: string         // Higgsfield output before lip-sync
-  syncLabsJobId?: string       // Sync.so generation ID (lip-sync step)
-  voiceJobId?: string          // jobId from ElevenLabs TTS
+  creatifyJobId?: string        // Creatify Aurora job ID
+  voiceJobId?: string           // jobId from ElevenLabs TTS
   voiceAudioUrl?: string       // S3 URL of generated voice audio
   // Scene settings (customer-provided context for video generation)
   propImages?: string[]
@@ -67,11 +64,8 @@ const VideoJobSchema = new Schema<IVideoJob>(
     previewUrl:      { type: String },
     finalVideoUrl:   { type: String },
     watermarkedUrl:  { type: String },
-    aiJobId:               { type: String },
-    higgsfieldStatusUrl:   { type: String },
-    rawVideoUrl:           { type: String },
-    syncLabsJobId:         { type: String },
-    voiceJobId:            { type: String },
+    creatifyJobId:  { type: String },
+    voiceJobId:     { type: String },
     voiceAudioUrl:      { type: String },
     propImages:         [{ type: String }],
     sceneNotes:         { type: String },
@@ -84,6 +78,6 @@ const VideoJobSchema = new Schema<IVideoJob>(
 
 VideoJobSchema.index({ userId: 1, status: 1 })
 VideoJobSchema.index({ status: 1 })
-VideoJobSchema.index({ aiJobId: 1 }, { sparse: true })
+VideoJobSchema.index({ creatifyJobId: 1 }, { sparse: true })
 
 export const VideoJob = mongoose.model<IVideoJob>('VideoJob', VideoJobSchema)

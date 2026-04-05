@@ -6,11 +6,9 @@ export interface ISettings extends Document {
   supportEmail: string
   adminEmail: string
   elevenLabsKey: string
-  higgsfieldKeyId: string
-  higgsfieldKeySecret: string
+  creatifyApiId: string
+  creatifyApiKey: string
   openaiKey: string
-  syncLabsKey: string
-  syncLabsWebhookSecret: string
   watermarkText: string
   watermarkOpacity: string
   watermarkPosition: string
@@ -27,11 +25,9 @@ const SettingsSchema = new Schema<ISettings>(
     supportEmail:      { type: String, default: 'support@twinity.ai' },
     adminEmail:        { type: String, default: 'admin@twinity.ai' },
     elevenLabsKey:  { type: String, default: '' },
-    higgsfieldKeyId:     { type: String, default: '' },
-    higgsfieldKeySecret: { type: String, default: '' },
+    creatifyApiId:  { type: String, default: '' },
+    creatifyApiKey: { type: String, default: '' },
     openaiKey:      { type: String, default: '' },
-    syncLabsKey:            { type: String, default: '' },
-    syncLabsWebhookSecret:  { type: String, default: '' },
     watermarkText:     { type: String, default: 'twinity.ai · PREVIEW' },
     watermarkOpacity:  { type: String, default: '0.35' },
     watermarkPosition: { type: String, default: 'Bottom Center' },
@@ -55,12 +51,10 @@ function maskKey(val: string): string {
 
 SettingsSchema.methods.toPublicJSON = function () {
   const obj = this.toObject()
-  if (obj.elevenLabsKey)      obj.elevenLabsKey      = maskKey(obj.elevenLabsKey)
-  if (obj.higgsfieldKeyId)     obj.higgsfieldKeyId     = maskKey(obj.higgsfieldKeyId)
-  if (obj.higgsfieldKeySecret) obj.higgsfieldKeySecret = maskKey(obj.higgsfieldKeySecret)
-  if (obj.openaiKey)          obj.openaiKey          = maskKey(obj.openaiKey)
-  if (obj.syncLabsKey)               obj.syncLabsKey               = maskKey(obj.syncLabsKey)
-  if (obj.syncLabsWebhookSecret)     obj.syncLabsWebhookSecret     = maskKey(obj.syncLabsWebhookSecret)
+  if (obj.elevenLabsKey)  obj.elevenLabsKey  = maskKey(obj.elevenLabsKey)
+  if (obj.creatifyApiId)  obj.creatifyApiId  = maskKey(obj.creatifyApiId)
+  if (obj.creatifyApiKey) obj.creatifyApiKey = maskKey(obj.creatifyApiKey)
+  if (obj.openaiKey)      obj.openaiKey      = maskKey(obj.openaiKey)
   if (obj.awsSecretAccessKey) obj.awsSecretAccessKey = maskKey(obj.awsSecretAccessKey)
   return obj
 }

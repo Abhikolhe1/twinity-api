@@ -1,10 +1,10 @@
 /**
- * AI Service — integrates ElevenLabs (TTS voice) and Higgsfield (lip-sync video).
+ * AI Service — integrates ElevenLabs (TTS voice) and Creatify Aurora (lip-sync video).
  * API keys are loaded dynamically from the Settings DB (via settingsService).
  *
  * Pipeline:
- *   1. generateVoice()      — ElevenLabs TTS using celebrity's cloned voiceModelId → MP3
- *   2. higgsfieldLipSync()  — Higgsfield: celebrity image + MP3 → lip-synced video (async)
+ *   1. generateVoice()   — ElevenLabs TTS using celebrity's cloned voiceModelId → MP3
+ *   2. creatifyAurora()  — Creatify Aurora: celebrity image + MP3 → lip-synced video (async)
  *
  * All methods fall back to stubs when credentials are not configured.
  */
@@ -52,15 +52,10 @@ async function generateVoicePreview(voiceId: string, language: string, apiKey: s
   }
 }
 
-// ─── Higgsfield API ───────────────────────────────────────────────────────────
-const HIGGSFIELD_BASE = 'https://platform.higgsfield.ai'
+// ─── Creatify API ─────────────────────────────────────────────────────────────
+const CREATIFY_BASE = 'https://api.creatify.ai'
 
-export interface HiggsfieldResult { jobId: string; statusUrl?: string; status: 'submitted' | 'stub' }
-
-// ─── Sync.so API ──────────────────────────────────────────────────────────────
-const SYNCLABS_BASE = 'https://api.sync.so/v2'
-
-export interface SyncLabsResult { jobId: string; status: 'submitted' | 'stub' }
+export interface CreatifyResult { jobId: string; status: 'submitted' | 'stub' }
 
 // ─── OpenAI API ───────────────────────────────────────────────────────────────
 const OPENAI_BASE = 'https://api.openai.com'
@@ -227,117 +222,57 @@ export const aiService = {
   },
 
   /**
-   * Higgsfield — generate a video from a celebrity image using ByteDance Seedance v1 Pro.
-   * Accepts a raw image URL and a script prompt; returns a job ID immediately.
-   * Completion is delivered via POST {SERVER_URL}/api/webhooks/higgsfield.
+   * Creatify Aurora — generate a lip-synced avatar video from a celebrity image + audio.
+   * Single step: replaces both Higgsfield (video gen) and Sync.so (lip-sync).
+   * Completion delivered via POST {SERVER_URL}/api/webhooks/creatify (or polled).
    *
-   * Auth format: "Key {api_key}:{api_key_secret}" — store both as "apiKey:apiSecret"
-   * in the higgsfieldKey settings field (colon-separated).
+   * Auth: X-API-ID + X-API-KEY headers
+   * POST https://api.creatify.ai/api/aurora/
    */
-  async higgsfieldVideoGenerate(params: {
+  async creatifyAurora(params: {
     audioUrl: string
     imageUrl: string
-    aspectRatio: string
     referenceId: string
-    script: string
-    durationSecs?: number
     callbackUrl?: string
-  }): Promise<HiggsfieldResult> {
-    logger.info(`[AI] Higgsfield image-to-video: refId=${params.referenceId}`)
-    const { higgsfieldKeyId, higgsfieldKeySecret } = await settingsService.get()
+  }): Promise<CreatifyResult> {
+    logger.info(`[AI] Creatify Aurora: refId=${params.referenceId}`)
+    const { creatifyApiId, creatifyApiKey } = await settingsService.get()
 
-    if (!higgsfieldKeyId || !higgsfieldKeySecret) {
-      logger.warn('[AI] Higgsfield key ID / secret not set — returning stub')
-      return { jobId: `stub-higgsfield-${Date.now()}`, status: 'stub' }
+    if (!creatifyApiId || !creatifyApiKey) {
+      logger.warn('[AI] Creatify API ID / key not set — returning stub')
+      return { jobId: `stub-creatify-${Date.now()}`, status: 'stub' }
     }
+
+    if (!params.imageUrl) throw new Error('Creatify Aurora: imageUrl is empty — upload a photo for this celebrity in the admin panel')
+    if (!params.audioUrl) throw new Error('Creatify Aurora: audioUrl is empty — ElevenLabs audio URL not available')
 
     const body: Record<string, unknown> = {
-      image_url: params.imageUrl,
-      prompt:    params.script,
+      image:         params.imageUrl,
+      audio:         params.audioUrl,
+      model_version: 'aurora_v1',
     }
-    if (params.audioUrl)    body.audio_url = params.audioUrl
-    if (params.durationSecs) body.duration  = params.durationSecs
+    if (params.callbackUrl) body.webhook_url = params.callbackUrl
 
-    const endpoint = new URL(`${HIGGSFIELD_BASE}/bytedance/seedance/v1/pro/image-to-video`)
-    if (params.callbackUrl) endpoint.searchParams.set('hf_webhook', params.callbackUrl)
+    logger.info(`[AI] Creatify Aurora — image: ${params.imageUrl.slice(0, 80)}`)
+    logger.info(`[AI] Creatify Aurora — audio: ${params.audioUrl.slice(0, 80)}`)
+    logger.info(`[AI] Creatify Aurora — webhook: ${params.callbackUrl ?? '[none]'}`)
 
-    logger.info(`[AI] Higgsfield request URL: ${endpoint.toString()}`)
-    logger.info(`[AI] Higgsfield request body: ${JSON.stringify({ ...body, audio_url: body.audio_url ? '[set]' : '[not set]', image_url: body.image_url ? '[set]' : '[not set]' })}`)
-    logger.info(`[AI] Higgsfield webhook URL: ${params.callbackUrl ?? '[none]'}`)
-
-    const res = await fetch(endpoint.toString(), {
+    const res = await fetch(`${CREATIFY_BASE}/api/aurora/`, {
       method: 'POST',
       headers: {
-        'Authorization': `Key ${higgsfieldKeyId}:${higgsfieldKeySecret}`,
+        'X-API-ID':     creatifyApiId,
+        'X-API-KEY':    creatifyApiKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
     })
     if (!res.ok) {
       const err = await res.text()
-      throw new Error(`Higgsfield image-to-video failed (${res.status}): ${err}`)
-    }
-    const data = await res.json() as { id?: string; job_id?: string; request_id?: string; status_url?: string }
-    const jobId     = data.request_id || data.id || data.job_id
-    const statusUrl = data.status_url
-    if (!jobId) throw new Error(`Higgsfield: no job ID in response: ${JSON.stringify(data)}`)
-    logger.info(`[AI] Higgsfield image-to-video job queued: request_id=${jobId}, status_url=${statusUrl ?? 'none'}`)
-    return { jobId, statusUrl, status: 'submitted' }
-  },
-
-  /**
-   * Sync.so — lip-sync a video to an audio track.
-   * Takes the Higgsfield-generated video + ElevenLabs audio and returns a lip-synced video.
-   * Completion is delivered via POST {SERVER_URL}/api/webhooks/synclabs (or polled).
-   *
-   * Auth: x-api-key header
-   * POST https://api.sync.so/v2/generate
-   */
-  async syncLabsLipSync(params: {
-    videoUrl: string
-    audioUrl: string
-    referenceId: string
-    callbackUrl?: string
-  }): Promise<SyncLabsResult> {
-    logger.info(`[AI] Sync.so lip-sync: refId=${params.referenceId}`)
-    const { syncLabsKey } = await settingsService.get()
-
-    if (!syncLabsKey) {
-      logger.warn('[AI] Sync.so key not set — skipping lip-sync (using raw Higgsfield video)')
-      return { jobId: `stub-synclabs-${Date.now()}`, status: 'stub' }
-    }
-
-    const body: Record<string, unknown> = {
-      model: 'lipsync-2-pro',
-      input: [
-        { type: 'video', url: params.videoUrl },
-        { type: 'audio', url: params.audioUrl },
-      ],
-    }
-    if (params.callbackUrl) body.webhookUrl = params.callbackUrl
-
-    if (!params.videoUrl) throw new Error('Sync.so: videoUrl is empty — Higgsfield video URL not available')
-    if (!params.audioUrl) throw new Error('Sync.so: audioUrl is empty — ElevenLabs audio URL not available')
-
-    logger.info(`[AI] Sync.so request — video: ${params.videoUrl.slice(0, 80)}`)
-    logger.info(`[AI] Sync.so request — audio: ${params.audioUrl.slice(0, 80)}`)
-    logger.info(`[AI] Sync.so webhook: ${params.callbackUrl ?? '[none]'}`)
-
-    const res = await fetch(`${SYNCLABS_BASE}/generate`, {
-      method: 'POST',
-      headers: {
-        'x-api-key': syncLabsKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    })
-    if (!res.ok) {
-      const err = await res.text()
-      throw new Error(`Sync.so lip-sync failed (${res.status}): ${err}`)
+      throw new Error(`Creatify Aurora failed (${res.status}): ${err}`)
     }
     const data = await res.json() as { id?: string; status?: string }
-    if (!data.id) throw new Error(`Sync.so: no id in response: ${JSON.stringify(data)}`)
-    logger.info(`[AI] Sync.so job submitted: id=${data.id}`)
+    if (!data.id) throw new Error(`Creatify Aurora: no id in response: ${JSON.stringify(data)}`)
+    logger.info(`[AI] Creatify Aurora job submitted: id=${data.id}`)
     return { jobId: data.id, status: 'submitted' }
   },
 
