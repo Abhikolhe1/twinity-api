@@ -8,7 +8,7 @@ export interface IUser extends Document {
   phone?: string
   company?: string
   avatarUrl?: string
-  accountType: 'individual' | 'celebrity'
+  accountType: 'individual' | 'influencer' | 'agency'
   authProvider: 'email' | 'google'
   hasEmailPassword: boolean
   isEmailVerified: boolean
@@ -30,7 +30,7 @@ const UserSchema = new Schema<IUser>(
     phone: { type: String, trim: true },
     company: { type: String, trim: true },
     avatarUrl: { type: String },
-    accountType: { type: String, enum: ['individual', 'celebrity'], default: 'individual' },
+    accountType: { type: String, enum: ['individual', 'influencer', 'agency'], default: 'individual' },
     authProvider: { type: String, enum: ['email', 'google'], default: 'email' },
     hasEmailPassword: { type: Boolean, default: false },
     isEmailVerified: { type: Boolean, default: false },

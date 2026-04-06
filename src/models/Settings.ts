@@ -9,6 +9,7 @@ export interface ISettings extends Document {
   creatifyApiId: string
   creatifyApiKey: string
   openaiKey: string
+  geminiApiKey: string
   watermarkText: string
   watermarkOpacity: string
   watermarkPosition: string
@@ -28,6 +29,7 @@ const SettingsSchema = new Schema<ISettings>(
     creatifyApiId:  { type: String, default: '' },
     creatifyApiKey: { type: String, default: '' },
     openaiKey:      { type: String, default: '' },
+    geminiApiKey:   { type: String, default: '' },
     watermarkText:     { type: String, default: 'twinity.ai · PREVIEW' },
     watermarkOpacity:  { type: String, default: '0.35' },
     watermarkPosition: { type: String, default: 'Bottom Center' },
@@ -55,6 +57,7 @@ SettingsSchema.methods.toPublicJSON = function () {
   if (obj.creatifyApiId)  obj.creatifyApiId  = maskKey(obj.creatifyApiId)
   if (obj.creatifyApiKey) obj.creatifyApiKey = maskKey(obj.creatifyApiKey)
   if (obj.openaiKey)      obj.openaiKey      = maskKey(obj.openaiKey)
+  if (obj.geminiApiKey)   obj.geminiApiKey   = maskKey(obj.geminiApiKey)
   if (obj.awsSecretAccessKey) obj.awsSecretAccessKey = maskKey(obj.awsSecretAccessKey)
   return obj
 }

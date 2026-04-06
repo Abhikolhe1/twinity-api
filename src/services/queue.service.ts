@@ -12,7 +12,6 @@
  */
 import { logger } from '../config/logger'
 import { VideoJob, IVideoJob } from '../models/VideoJob'
-import { Celebrity } from '../models/Celebrity'
 import { aiService } from './ai.service'
 import { s3Service } from './s3.service'
 import { settingsService } from './settings.service'
@@ -134,8 +133,8 @@ async function processJob(jobId: string): Promise<void> {
     if (!celeb.voiceModelId) throw new Error(`Celebrity ${celeb.name} has no ElevenLabs voiceModelId`)
     if (!settings.elevenLabsKey) throw new Error('ElevenLabs API key not configured')
 
-    // Limit script to 25 words to keep audio concise for Creatify Aurora
-    const MAX_WORDS = 25
+    // Limit script to 40 words to keep audio concise for Creatify Aurora
+    const MAX_WORDS = 40
     const scriptWords = job.script.trim().split(/\s+/)
     const ttsScript = scriptWords.length > MAX_WORDS
       ? scriptWords.slice(0, MAX_WORDS).join(' ')

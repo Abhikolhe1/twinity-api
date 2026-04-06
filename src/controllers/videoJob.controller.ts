@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
+import mongoose from 'mongoose'
 import { VideoJob, VideoJobStatus } from '../models/VideoJob'
 import { Celebrity } from '../models/Celebrity'
 import { User } from '../models/User'
@@ -8,6 +9,7 @@ import { queueService } from '../services/queue.service'
 import { emailService } from '../services/email.service'
 import { s3Service } from '../services/s3.service'
 import { aiService } from '../services/ai.service'
+import { settingsService } from '../services/settings.service'
 import { AuthRequest } from '../middleware/auth'
 
 async function signJobThumbnail(job: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -70,19 +72,46 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
   }
 }
 
+export async function getMyStats(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const counts = await VideoJob.aggregate([
+      { $match: { userId: new mongoose.Types.ObjectId(req.userId) } },
+      { $group: { _id: '$status', count: { $sum: 1 } } },
+    ])
+    const stats: Record<string, number> = { all: 0, pending: 0, 'in-progress': 0, review: 0, delivered: 0, cancelled: 0, failed: 0 }
+    for (const row of counts) {
+      const s = row._id as string
+      if (s in stats) stats[s] = row.count
+      stats.all += row.count
+    }
+    res.json({ success: true, data: stats })
+  } catch (err) {
+    next(err)
+  }
+}
+
 export async function getMyJobs(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { status } = req.query
+    const { status, page = '1', limit = '12' } = req.query
     const filter: Record<string, unknown> = { userId: req.userId }
     if (status && status !== 'all') filter.status = status
 
-    const raw = await VideoJob.find(filter)
-      .populate('celebrityId', 'name nameAr initials avatarColor thumbnailUrl')
-      .sort({ createdAt: -1 })
-      .lean()
+    const pageNum  = Math.max(1, parseInt(page  as string, 10) || 1)
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit as string, 10) || 12))
+    const skip     = (pageNum - 1) * limitNum
+
+    const [raw, total] = await Promise.all([
+      VideoJob.find(filter)
+        .populate('celebrityId', 'name nameAr initials avatarColor thumbnailUrl')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      VideoJob.countDocuments(filter),
+    ])
 
     const data = await Promise.all(raw.map(j => signJobThumbnail(j as Record<string, unknown>)))
-    res.json({ success: true, data, total: data.length })
+    res.json({ success: true, data, total, page: pageNum, pages: Math.ceil(total / limitNum), hasMore: skip + data.length < total })
   } catch (err) {
     next(err)
   }
@@ -129,6 +158,22 @@ export async function submitBookCall(req: AuthRequest, res: Response, next: Next
     emailService.sendNewLeadNotification(lead).catch(() => null)
 
     res.status(201).json({ success: true, data: lead, message: 'Sales inquiry submitted successfully' })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function cancelJob(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const job = await VideoJob.findOne({ referenceId: req.params.referenceId, userId: req.userId })
+    if (!job) throw new AppError('Job not found', 404)
+    if (job.status !== 'pending') throw new AppError('Only pending jobs can be cancelled', 400)
+
+    job.status = 'cancelled'
+    job.statusHistory.push({ status: 'cancelled', timestamp: new Date(), note: 'Cancelled by customer' })
+    await job.save()
+
+    res.json({ success: true, data: job })
   } catch (err) {
     next(err)
   }
@@ -261,6 +306,83 @@ export async function improveScript(req: AuthRequest, res: Response, next: NextF
 
     const improved = await aiService.improveScript({ script, celebrityName, productType, purpose })
     res.json({ success: true, improvedScript: improved })
+  } catch (err) {
+    next(err)
+  }
+}
+
+// Authenticated — generate image with Gemini
+export async function generateImage(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { prompt, chatHistory } = req.body as {
+      prompt: string
+      chatHistory?: Array<{ role: 'user' | 'model'; text: string; imageUrl?: string }>
+    }
+    if (!prompt?.trim()) throw new AppError('prompt is required', 400)
+
+    const settings = await settingsService.get()
+    if (!settings.geminiApiKey) {
+      throw new AppError('Gemini API key not configured. Please add it in Admin > Settings.', 503)
+    }
+
+    // Build conversation contents for Gemini
+    const contents: Array<{ role: string; parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }> = []
+
+    if (chatHistory?.length) {
+      for (const msg of chatHistory) {
+        if (msg.role === 'user') {
+          contents.push({ role: 'user', parts: [{ text: msg.text }] })
+        } else if (msg.role === 'model' && msg.imageUrl) {
+          // Re-send previous image as inline data for context
+          const base64Match = msg.imageUrl.match(/^data:image\/(.*?);base64,(.+)$/)
+          if (base64Match) {
+            contents.push({
+              role: 'model',
+              parts: [{ inlineData: { mimeType: `image/${base64Match[1]}`, data: base64Match[2] } }],
+            })
+          }
+        }
+      }
+    }
+
+    contents.push({ role: 'user', parts: [{ text: prompt }] })
+
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key=${settings.geminiApiKey}`,
+      {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents,
+          generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
+        }),
+      },
+    )
+
+    if (!geminiRes.ok) {
+      const errText = await geminiRes.text()
+      throw new AppError(`Gemini API error (${geminiRes.status}): ${errText}`, 502)
+    }
+
+    const geminiData = await geminiRes.json() as {
+      candidates?: Array<{
+        content?: {
+          parts?: Array<{
+            text?: string
+            inlineData?: { mimeType: string; data: string }
+          }>
+        }
+      }>
+    }
+
+    const parts = geminiData.candidates?.[0]?.content?.parts ?? []
+    const imagePart = parts.find(p => p.inlineData)
+    if (!imagePart?.inlineData) throw new AppError('Gemini returned no image', 502)
+
+    const imageUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`
+    const textPart = parts.find(p => p.text)
+
+    res.json({ success: true, imageUrl, revisedPrompt: textPart?.text })
   } catch (err) {
     next(err)
   }

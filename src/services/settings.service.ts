@@ -13,6 +13,7 @@ interface CachedSettings {
   creatifyApiId: string
   creatifyApiKey: string
   openaiKey: string
+  geminiApiKey: string
   watermarkText: string
   watermarkOpacity: string
   watermarkPosition: string
@@ -39,6 +40,7 @@ async function load(): Promise<CachedSettings> {
       creatifyApiId:  d.creatifyApiId  || env.externalApis.creatifyApiId  || '',
       creatifyApiKey: d.creatifyApiKey || env.externalApis.creatifyApiKey || '',
       openaiKey:      d.openaiKey      || env.externalApis.openai         || '',
+      geminiApiKey:   d.geminiApiKey   || '',
       watermarkText:     d.watermarkText     || 'twinity.ai · PREVIEW',
       watermarkOpacity:  d.watermarkOpacity  || '0.35',
       watermarkPosition: d.watermarkPosition || 'Bottom Center',
@@ -57,6 +59,7 @@ async function load(): Promise<CachedSettings> {
       creatifyApiId:  env.externalApis.creatifyApiId  || '',
       creatifyApiKey: env.externalApis.creatifyApiKey || '',
       openaiKey:      env.externalApis.openai         || '',
+      geminiApiKey:   '',
       watermarkText:     'twinity.ai · PREVIEW',
       watermarkOpacity:  '0.35',
       watermarkPosition: 'Bottom Center',

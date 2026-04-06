@@ -20,7 +20,7 @@ export async function register(req: Request, res: Response, next: NextFunction):
     const verificationToken = uuidv4()
     const user = await User.create({
       name, email, password, phone, company,
-      accountType: accountType === 'celebrity' ? 'celebrity' : 'individual',
+      accountType: ['individual', 'influencer', 'agency'].includes(accountType) ? accountType : 'individual',
       authProvider: 'email',
       hasEmailPassword: true,
       emailVerificationToken: verificationToken,

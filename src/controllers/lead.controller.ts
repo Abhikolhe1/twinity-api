@@ -33,7 +33,7 @@ export async function adminListLeads(req: Request, res: Response, next: NextFunc
 
     const skip = (Number(page) - 1) * Number(limit)
     const [leads, total] = await Promise.all([
-      Lead.find(filter).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)),
+      Lead.find(filter).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)).populate('videoJobId', 'referenceId status'),
       Lead.countDocuments(filter),
     ])
 

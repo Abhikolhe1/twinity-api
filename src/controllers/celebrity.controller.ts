@@ -12,7 +12,16 @@ import { logger } from '../config/logger'
  * it to JPEG and upload to S3.
  */
 async function resolveThumbnailUrl(thumbnailUrl: string | undefined, slug: string): Promise<string | undefined> {
-  if (!thumbnailUrl || !thumbnailUrl.startsWith('data:')) return thumbnailUrl
+  if (!thumbnailUrl) return thumbnailUrl
+
+  // Strip pre-signed query params so we always store the clean S3 URL.
+  // When the edit form saves without changing the image it sends back the
+  // pre-signed URL that was loaded — storing it as-is would corrupt the key.
+  if (thumbnailUrl.includes('amazonaws.com/') && thumbnailUrl.includes('?')) {
+    thumbnailUrl = thumbnailUrl.split('?')[0]
+  }
+
+  if (!thumbnailUrl.startsWith('data:')) return thumbnailUrl
 
   const match = thumbnailUrl.match(/^data:([^;]+);base64,(.+)$/)
   if (!match) return thumbnailUrl
