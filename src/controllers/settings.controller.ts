@@ -47,6 +47,49 @@ export async function getSettings(_req: Request, res: Response): Promise<void> {
   }
 }
 
+export async function getBlockedWords(_req: Request, res: Response): Promise<void> {
+  try {
+    const settings = await Settings.findOne({ key: 'global' })
+    res.json({ success: true, data: settings?.blockedWords ?? [] })
+  } catch {
+    res.status(500).json({ success: false, message: 'Failed to load blocked words' })
+  }
+}
+
+export async function addBlockedWord(req: Request, res: Response): Promise<void> {
+  try {
+    const raw = req.body.words ?? req.body.word
+    const words = (Array.isArray(raw) ? raw : [raw])
+      .map((w: unknown) => String(w).trim().toLowerCase())
+      .filter(Boolean)
+    if (!words.length) { res.status(400).json({ success: false, message: 'words is required' }); return }
+    const settings = await Settings.findOneAndUpdate(
+      { key: 'global' },
+      { $addToSet: { blockedWords: { $each: words } } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    )
+    settingsService.invalidate()
+    res.json({ success: true, data: settings.blockedWords })
+  } catch {
+    res.status(500).json({ success: false, message: 'Failed to add words' })
+  }
+}
+
+export async function removeBlockedWord(req: Request, res: Response): Promise<void> {
+  try {
+    const word = decodeURIComponent(req.params.word).trim().toLowerCase()
+    const settings = await Settings.findOneAndUpdate(
+      { key: 'global' },
+      { $pull: { blockedWords: word } },
+      { new: true },
+    )
+    settingsService.invalidate()
+    res.json({ success: true, data: settings?.blockedWords ?? [] })
+  } catch {
+    res.status(500).json({ success: false, message: 'Failed to remove word' })
+  }
+}
+
 export async function updateSettings(req: Request, res: Response): Promise<void> {
   try {
     const body = { ...req.body }

@@ -10,6 +10,7 @@ import { emailService } from '../services/email.service'
 import { s3Service } from '../services/s3.service'
 import { aiService } from '../services/ai.service'
 import { settingsService } from '../services/settings.service'
+import { Settings } from '../models/Settings'
 import { AuthRequest } from '../middleware/auth'
 
 async function signJobThumbnail(job: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -35,6 +36,31 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
 
     const celeb = await Celebrity.findById(celebrityId)
     if (!celeb || !celeb.isActive) throw new AppError('Celebrity not found or inactive', 404)
+
+    // Check script against blocked words via DB aggregation (scales to large word lists)
+    if (script) {
+      const agg = await Settings.aggregate([
+        { $match: { key: 'global' } },
+        {
+          $project: {
+            found: {
+              $filter: {
+                input: '$blockedWords',
+                as: 'word',
+                cond: {
+                  $regexMatch: {
+                    input: script.toLowerCase(),
+                    regex: { $concat: ['\\b', { $toLower: '$$word' }, '\\b'] },
+                  },
+                },
+              },
+            },
+          },
+        },
+      ])
+      const found: string[] = agg[0]?.found ?? []
+      if (found.length > 0) throw new AppError(`Script contains prohibited content: ${found.join(', ')}`, 422)
+    }
 
     // Estimate price based on product type range
     const range = celeb.priceRange[productType as keyof typeof celeb.priceRange]

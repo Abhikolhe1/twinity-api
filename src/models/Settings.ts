@@ -17,6 +17,7 @@ export interface ISettings extends Document {
   awsSecretAccessKey: string
   awsRegion: string
   s3Bucket: string
+  blockedWords: string[]
 }
 
 const SettingsSchema = new Schema<ISettings>(
@@ -37,6 +38,7 @@ const SettingsSchema = new Schema<ISettings>(
     awsSecretAccessKey: { type: String, default: '' },
     awsRegion:          { type: String, default: 'us-east-1' },
     s3Bucket:           { type: String, default: 'twinity-storage' },
+    blockedWords:       { type: [String], default: [] },
   },
   { timestamps: true }
 )
