@@ -12,6 +12,7 @@
  */
 import { logger } from '../config/logger'
 import { VideoJob, IVideoJob } from '../models/VideoJob'
+import { ProductType } from '../models/ProductType'
 import { aiService } from './ai.service'
 import { s3Service } from './s3.service'
 import { settingsService } from './settings.service'
@@ -151,16 +152,21 @@ async function processJob(jobId: string): Promise<void> {
 
     // ── Step 3: Creatify Aurora (image + audio → lip-synced video) ──────
     if (!celeb.thumbnailUrl) throw new Error(`Celebrity ${celeb.name} has no thumbnailUrl — upload a photo in the admin panel`)
-    const imageUrl = await s3Service.presignIfS3(celeb.thumbnailUrl, 7200)
+    // Short-lived presign (2h) so Creatify can download it — bypass the long-lived cache
+    const imageUrl = await s3Service.presignIfS3Short(celeb.thumbnailUrl, 7200)
     logger.info(`[Queue] Job ${job.referenceId} — imageUrl=${imageUrl}`)
 
     const callbackUrl = env.serverUrl ? `${env.serverUrl}/api/webhooks/creatify` : undefined
 
+    // Look up product-type prompts from DB (falls back to defaults when not found)
+    const productTypDoc = await ProductType.findOne({ slug: job.productType }).lean()
+
     const render = await aiService.creatifyAurora({
-      audioUrl:    voiceAudioUrl,
-      imageUrl:    imageUrl!,
-      referenceId: job.referenceId,
+      audioUrl:       voiceAudioUrl,
+      imageUrl:       imageUrl!,
+      referenceId:    job.referenceId,
       callbackUrl,
+      creatifyPrompt: productTypDoc?.creatifyPrompt,
     })
 
     job.creatifyJobId = render.jobId

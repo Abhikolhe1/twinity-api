@@ -11,6 +11,7 @@ import { s3Service } from '../services/s3.service'
 import { aiService } from '../services/ai.service'
 import { settingsService } from '../services/settings.service'
 import { Settings } from '../models/Settings'
+import { ProductType } from '../models/ProductType'
 import { AuthRequest } from '../middleware/auth'
 
 async function signJobThumbnail(job: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -340,15 +341,25 @@ export async function improveScript(req: AuthRequest, res: Response, next: NextF
 // Authenticated — generate image with Gemini
 export async function generateImage(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { prompt, chatHistory } = req.body as {
+    const { prompt, chatHistory, productTypeSlug } = req.body as {
       prompt: string
       chatHistory?: Array<{ role: 'user' | 'model'; text: string; imageUrl?: string }>
+      productTypeSlug?: string
     }
     if (!prompt?.trim()) throw new AppError('prompt is required', 400)
 
     const settings = await settingsService.get()
     if (!settings.geminiApiKey) {
       throw new AppError('Gemini API key not configured. Please add it in Admin > Settings.', 503)
+    }
+
+    // Load product-type Gemini system prompt from DB when provided
+    let geminiSystemPrompt: string | undefined
+    if (productTypeSlug) {
+      const pt = await ProductType.findOne({ slug: productTypeSlug }).lean()
+      if (pt?.geminiSystemPrompt?.trim()) {
+        geminiSystemPrompt = pt.geminiSystemPrompt
+      }
     }
 
     // Build conversation contents for Gemini
@@ -373,15 +384,23 @@ export async function generateImage(req: AuthRequest, res: Response, next: NextF
 
     contents.push({ role: 'user', parts: [{ text: prompt }] })
 
+    const requestBody: Record<string, unknown> = {
+      contents,
+      generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
+    }
+    if (geminiSystemPrompt) {
+      requestBody.systemInstruction = {
+        role: 'system',
+        parts: [{ text: geminiSystemPrompt }],
+      }
+    }
+
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key=${settings.geminiApiKey}`,
       {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents,
-          generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
-        }),
+        body: JSON.stringify(requestBody),
       },
     )
 

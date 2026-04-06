@@ -14,8 +14,9 @@ import leadRoutes       from './routes/lead.routes'
 import adminRoutes      from './routes/admin.routes'
 import roleRoutes       from './routes/role.routes'
 import teamRoutes       from './routes/team.routes'
-import templateRoutes   from './routes/template.routes'
-import webhookRoutes    from './routes/webhook.routes'
+import templateRoutes     from './routes/template.routes'
+import productTypeRoutes  from './routes/productType.routes'
+import webhookRoutes      from './routes/webhook.routes'
 
 const app = express()
 
@@ -70,7 +71,8 @@ app.use('/api/leads',       leadRoutes)
 app.use('/api/admin',       adminRoutes)
 app.use('/api/admin/roles', roleRoutes)
 app.use('/api/admin/team',  teamRoutes)
-app.use('/api/templates',   templateRoutes)
+app.use('/api/templates',     templateRoutes)
+app.use('/api/product-types', productTypeRoutes)
 
 // ── 404 ───────────────────────────────────────────────────
 app.use((_req, res) => {

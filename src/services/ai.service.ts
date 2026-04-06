@@ -57,19 +57,6 @@ const CREATIFY_BASE = 'https://api.creatify.ai'
 
 export interface CreatifyResult { jobId: string; status: 'submitted' | 'stub' }
 
-const CREATIFY_POSITIVE_PROMPT =
-  'Maintain a calm, authoritative, and professional manner. ' +
-  'Smiling, friendly expression. ' +
-  'Subtle eyebrow raise on key statements, natural hand movements. ' +
-  'Keep natural breathing inhale exhale cycle, visible between speech.'
-
-const CREATIFY_NEGATIVE_PROMPT =
-  'Avoid: cartoon, illustration, anime, painting, oversmooth skin, plastic skin, ' +
-  'unrealistic face, distorted eyes, extra fingers, blur, low resolution, ' +
-  'bad anatomy, artificial lighting, waxy skin.'
-
-const CREATIFY_TEXT_PROMPT = `${CREATIFY_POSITIVE_PROMPT}\n${CREATIFY_NEGATIVE_PROMPT}`
-
 // ─── OpenAI API ───────────────────────────────────────────────────────────────
 const OPENAI_BASE = 'https://api.openai.com'
 
@@ -247,6 +234,7 @@ export const aiService = {
     imageUrl: string
     referenceId: string
     callbackUrl?: string
+    creatifyPrompt?: string
   }): Promise<CreatifyResult> {
     const { creatifyApiId, creatifyApiKey } = await settingsService.get()
 
@@ -257,6 +245,8 @@ export const aiService = {
 
     if (!params.imageUrl) throw new Error('Creatify Aurora: imageUrl is empty — upload a photo for this celebrity in the admin panel')
     if (!params.audioUrl) throw new Error('Creatify Aurora: audioUrl is empty — ElevenLabs audio URL not available')
+
+    const textPrompt = params.creatifyPrompt?.trim() ?? ''
 
     return fetch(`${CREATIFY_BASE}/api/aurora/`, {
       method: 'POST',
@@ -271,7 +261,7 @@ export const aiService = {
         audio:                 params.audioUrl,
         image:                 params.imageUrl,
         name:                  params.referenceId,
-        text_prompt:           CREATIFY_TEXT_PROMPT,
+        text_prompt:           textPrompt,
         prompt_guidance_scale: 1,
         model_version:         'aurora_v1',
         webhook_url:           params.callbackUrl,
