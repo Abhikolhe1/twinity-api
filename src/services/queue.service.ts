@@ -161,12 +161,18 @@ async function processJob(jobId: string): Promise<void> {
     // Look up product-type prompts from DB (falls back to defaults when not found)
     const productTypDoc = await ProductType.findOne({ slug: job.productType }).lean()
 
+    // Presign background image (2h) so Creatify can download it
+    const backgroundImageUrl = job.backgroundImageUrl
+      ? await s3Service.presignIfS3Short(job.backgroundImageUrl, 7200) ?? job.backgroundImageUrl
+      : undefined
+
     const render = await aiService.creatifyAurora({
-      audioUrl:       voiceAudioUrl,
-      imageUrl:       imageUrl!,
-      referenceId:    job.referenceId,
+      audioUrl:           voiceAudioUrl,
+      imageUrl:           imageUrl!,
+      referenceId:        job.referenceId,
       callbackUrl,
-      creatifyPrompt: productTypDoc?.creatifyPrompt,
+      creatifyPrompt:     productTypDoc?.creatifyPrompt,
+      backgroundImageUrl,
     })
 
     job.creatifyJobId = render.jobId

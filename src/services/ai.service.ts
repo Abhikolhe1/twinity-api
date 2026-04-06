@@ -235,6 +235,7 @@ export const aiService = {
     referenceId: string
     callbackUrl?: string
     creatifyPrompt?: string
+    backgroundImageUrl?: string
   }): Promise<CreatifyResult> {
     const { creatifyApiId, creatifyApiKey } = await settingsService.get()
 
@@ -248,6 +249,8 @@ export const aiService = {
 
     const textPrompt = params.creatifyPrompt?.trim() ?? ''
 
+    logger.info(`[AI] Creatify Background Image: ${params.backgroundImageUrl}`)
+
     return fetch(`${CREATIFY_BASE}/api/aurora/`, {
       method: 'POST',
       headers: {
@@ -259,7 +262,7 @@ export const aiService = {
       },
       body: JSON.stringify({
         audio:                 params.audioUrl,
-        image:                 params.imageUrl,
+        image:                 params.backgroundImageUrl ?? params.imageUrl,
         name:                  params.referenceId,
         text_prompt:           textPrompt,
         prompt_guidance_scale: 1,

@@ -341,10 +341,12 @@ export async function improveScript(req: AuthRequest, res: Response, next: NextF
 // Authenticated — generate image with Gemini
 export async function generateImage(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { prompt, chatHistory, productTypeSlug } = req.body as {
+    const { prompt, chatHistory, productTypeSlug, celebrityImageUrl, propImages } = req.body as {
       prompt: string
       chatHistory?: Array<{ role: 'user' | 'model'; text: string; imageUrl?: string }>
       productTypeSlug?: string
+      celebrityImageUrl?: string
+      propImages?: string[]   // base64 data URLs
     }
     if (!prompt?.trim()) throw new AppError('prompt is required', 400)
 
@@ -363,26 +365,62 @@ export async function generateImage(req: AuthRequest, res: Response, next: NextF
     }
 
     // Build conversation contents for Gemini
-    const contents: Array<{ role: string; parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }> = []
+    type GeminiPart = { text?: string; inlineData?: { mimeType: string; data: string } }
+    const contents: Array<{ role: string; parts: GeminiPart[] }> = []
+
+    // Helper: fetch a URL (S3 presigned or external) and convert to base64 inline part
+    async function urlToInlinePart(url: string): Promise<GeminiPart | null> {
+      try {
+        const imgRes = await fetch(url)
+        if (!imgRes.ok) return null
+        const mimeType = imgRes.headers.get('content-type') || 'image/jpeg'
+        const buf = await imgRes.arrayBuffer()
+        return { inlineData: { mimeType, data: Buffer.from(buf).toString('base64') } }
+      } catch { return null }
+    }
 
     if (chatHistory?.length) {
       for (const msg of chatHistory) {
         if (msg.role === 'user') {
           contents.push({ role: 'user', parts: [{ text: msg.text }] })
         } else if (msg.role === 'model' && msg.imageUrl) {
-          // Re-send previous image as inline data for context
-          const base64Match = msg.imageUrl.match(/^data:image\/(.*?);base64,(.+)$/)
-          if (base64Match) {
-            contents.push({
-              role: 'model',
-              parts: [{ inlineData: { mimeType: `image/${base64Match[1]}`, data: base64Match[2] } }],
-            })
+          // Re-send previous image as inline data for Gemini context
+          // Supports both data URLs (legacy) and S3 presigned URLs (current)
+          let part: GeminiPart | null = null
+          if (msg.imageUrl.startsWith('data:image/')) {
+            const base64Match = msg.imageUrl.match(/^data:image\/(.*?);base64,(.+)$/)
+            if (base64Match) part = { inlineData: { mimeType: `image/${base64Match[1]}`, data: base64Match[2] } }
+          } else if (msg.imageUrl.startsWith('https://')) {
+            part = await urlToInlinePart(msg.imageUrl)
           }
+          if (part) contents.push({ role: 'model', parts: [part] })
         }
       }
     }
 
-    contents.push({ role: 'user', parts: [{ text: prompt }] })
+    // Build the current user message — reference images come first, then the text prompt
+    const currentParts: GeminiPart[] = []
+
+    // Celebrity thumbnail: fetch from presigned S3 URL and inline as base64
+    if (celebrityImageUrl?.trim()) {
+      const part = await urlToInlinePart(celebrityImageUrl)
+      if (part) currentParts.push(part)
+    }
+
+    // Prop / item reference images — now S3 presigned URLs uploaded via /upload-asset
+    // Also accept legacy base64 data URLs for backwards compatibility
+    for (const imgUrl of propImages ?? []) {
+      if (imgUrl.startsWith('data:image/')) {
+        const match = imgUrl.match(/^data:(image\/[^;]+);base64,(.+)$/)
+        if (match) currentParts.push({ inlineData: { mimeType: match[1], data: match[2] } })
+      } else if (imgUrl.startsWith('https://')) {
+        const part = await urlToInlinePart(imgUrl)
+        if (part) currentParts.push(part)
+      }
+    }
+
+    currentParts.push({ text: prompt })
+    contents.push({ role: 'user', parts: currentParts })
 
     const requestBody: Record<string, unknown> = {
       contents,
@@ -424,10 +462,50 @@ export async function generateImage(req: AuthRequest, res: Response, next: NextF
     const imagePart = parts.find(p => p.inlineData)
     if (!imagePart?.inlineData) throw new AppError('Gemini returned no image', 502)
 
-    const imageUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`
-    const textPart = parts.find(p => p.text)
+    // Upload generated image to S3 so Creatify can access it via HTTPS
+    const imgBuffer  = Buffer.from(imagePart.inlineData.data, 'base64')
+    const imgMime    = imagePart.inlineData.mimeType          // e.g. image/png
+    const imgExt     = imgMime.split('/')[1] || 'png'
+    const userId     = req.userId ?? 'anon'
+    const imgKey     = `generated-images/${userId}/${Date.now()}.${imgExt}`
+    const { s3Bucket } = await settingsService.get()
+    const upload = await s3Service.upload(s3Bucket, imgKey, imgBuffer, imgMime)
 
+    // Return presigned URL (or stub URL if no S3 configured)
+    const imageUrl = upload.stub
+      ? upload.url
+      : await s3Service.getPresignedUrl(s3Bucket, upload.key, 86_400)
+
+    const textPart = parts.find(p => p.text)
     res.json({ success: true, imageUrl, revisedPrompt: textPart?.text })
+  } catch (err) {
+    next(err)
+  }
+}
+
+// Authenticated — upload a user asset (prop/reference image) to S3
+export async function uploadAsset(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { dataUrl } = req.body as { dataUrl?: string }
+    if (!dataUrl?.trim()) throw new AppError('dataUrl is required', 400)
+
+    const match = dataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/)
+    if (!match) throw new AppError('dataUrl must be a valid base64 image data URL', 400)
+
+    const mimeType = match[1]
+    const ext      = mimeType.split('/')[1] || 'png'
+    const buffer   = Buffer.from(match[2], 'base64')
+    const userId   = req.userId ?? 'anon'
+    const key      = `user-assets/${userId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+
+    const { s3Bucket } = await settingsService.get()
+    const upload = await s3Service.upload(s3Bucket, key, buffer, mimeType)
+
+    const url = upload.stub
+      ? upload.url
+      : await s3Service.getPresignedUrl(s3Bucket, upload.key, 86_400)
+
+    res.json({ success: true, url })
   } catch (err) {
     next(err)
   }
