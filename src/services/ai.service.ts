@@ -57,6 +57,19 @@ const CREATIFY_BASE = 'https://api.creatify.ai'
 
 export interface CreatifyResult { jobId: string; status: 'submitted' | 'stub' }
 
+const CREATIFY_POSITIVE_PROMPT =
+  'Maintain a calm, authoritative, and professional manner. ' +
+  'Smiling, friendly expression. ' +
+  'Subtle eyebrow raise on key statements, natural hand movements. ' +
+  'Keep natural breathing inhale exhale cycle, visible between speech.'
+
+const CREATIFY_NEGATIVE_PROMPT =
+  'Avoid: cartoon, illustration, anime, painting, oversmooth skin, plastic skin, ' +
+  'unrealistic face, distorted eyes, extra fingers, blur, low resolution, ' +
+  'bad anatomy, artificial lighting, waxy skin.'
+
+const CREATIFY_TEXT_PROMPT = `${CREATIFY_POSITIVE_PROMPT}\n${CREATIFY_NEGATIVE_PROMPT}`
+
 // ─── OpenAI API ───────────────────────────────────────────────────────────────
 const OPENAI_BASE = 'https://api.openai.com'
 
@@ -235,7 +248,6 @@ export const aiService = {
     referenceId: string
     callbackUrl?: string
   }): Promise<CreatifyResult> {
-    logger.info(`[AI] Creatify Aurora: refId=${params.referenceId}`)
     const { creatifyApiId, creatifyApiKey } = await settingsService.get()
 
     if (!creatifyApiId || !creatifyApiKey) {
@@ -246,48 +258,37 @@ export const aiService = {
     if (!params.imageUrl) throw new Error('Creatify Aurora: imageUrl is empty — upload a photo for this celebrity in the admin panel')
     if (!params.audioUrl) throw new Error('Creatify Aurora: audioUrl is empty — ElevenLabs audio URL not available')
 
-    // Only send webhook_url when it is a reachable public HTTPS URL.
-    // Sending a localhost URL causes Creatify to fail with 508 (it tries to reach it).
-    const isPublicUrl = (u: string) =>
-      u.startsWith('https://') && !u.includes('localhost') && !u.includes('127.0.0.1')
-
-    const body: Record<string, unknown> = {
-      image:         params.imageUrl,
-      audio:         params.audioUrl,
-      model_version: 'aurora_v1',
-    }
-    if (params.callbackUrl && isPublicUrl(params.callbackUrl)) {
-      body.webhook_url = params.callbackUrl
-    } else if (params.callbackUrl) {
-      logger.info(`[AI] Creatify Aurora — webhook URL is not public, skipping (will use polling): ${params.callbackUrl}`)
-    }
-
-    logger.info(`[AI] Creatify Aurora — image: ${params.imageUrl}`)
-    logger.info(`[AI] Creatify Aurora — audio: ${params.audioUrl}`)
-    logger.info(`[AI] Creatify Aurora — webhook: ${body.webhook_url ?? '[none — polling fallback]'}`)
-    logger.info(`[AI] Creatify Aurora — request body: ${JSON.stringify({ ...body, image: '[set]', audio: '[set]' })}`)
-
-    const res = await fetch(`${CREATIFY_BASE}/api/aurora/`, {
+    return fetch(`${CREATIFY_BASE}/api/aurora/`, {
       method: 'POST',
       headers: {
         'X-API-ID':     creatifyApiId,
         'X-API-KEY':    creatifyApiKey,
         'Content-Type': 'application/json',
+        'Accept':       '*/*',
+        'User-Agent':   'PostmanRuntime/7.53.0',
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        audio:                 params.audioUrl,
+        image:                 params.imageUrl,
+        name:                  params.referenceId,
+        text_prompt:           CREATIFY_TEXT_PROMPT,
+        prompt_guidance_scale: 1,
+        model_version:         'aurora_v1',
+        webhook_url:           params.callbackUrl,
+      }),
     })
-
-    const responseText = await res.text()
-    logger.info(`[AI] Creatify Aurora response (${res.status}): ${responseText}`)
-
-    if (!res.ok) {
-      throw new Error(`Creatify Aurora failed (${res.status}): ${responseText}`)
-    }
-
-    const data = JSON.parse(responseText) as { id?: string; status?: string }
-    if (!data.id) throw new Error(`Creatify Aurora: no id in response: ${responseText}`)
-    logger.info(`[AI] Creatify Aurora job submitted: id=${data.id}`)
-    return { jobId: data.id, status: 'submitted' }
+      .then(async res => {
+        const text = await res.text()
+        if (!text) throw new Error(`Creatify Aurora (${res.status}): empty response body`)
+        const data = JSON.parse(text) as { id?: string; status?: string }
+        if (!data.id) throw new Error(`Creatify Aurora: no id in response: ${text}`)
+        logger.info(`[AI] Creatify Aurora job submitted: id=${data.id}`)
+        return { jobId: data.id, status: 'submitted' as const }
+      })
+      .catch((err: unknown) => {
+        logger.error('[AI] Creatify Aurora error:', err)
+        throw err
+      })
   },
 
   /**
