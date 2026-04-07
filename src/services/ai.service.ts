@@ -37,7 +37,7 @@ async function generateVoicePreview(voiceId: string, language: string, apiKey: s
     const res = await fetch(`${ELEVENLABS_BASE}/text-to-speech/${voiceId}`, {
       method: 'POST',
       headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: sampleText, model_id: 'eleven_multilingual_v2' }),
+      body: JSON.stringify({ text: sampleText, model_id: 'eleven_v3' }),
     })
     if (!res.ok) {
       const err = await res.text()
@@ -83,7 +83,7 @@ export const aiService = {
     const res = await fetch(`${ELEVENLABS_BASE}/text-to-speech/${celebrityVoiceId}/with-timestamps`, {
       method: 'POST',
       headers: { 'xi-api-key': elevenLabsKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: script, model_id: 'eleven_multilingual_v2', voice_settings: { speed: 0.9 } }),
+      body: JSON.stringify({ text: script, model_id: 'eleven_v3', voice_settings: { speed: 0.9 } }),
     })
     if (!res.ok) throw new Error(`ElevenLabs failed (${res.status})`)
 
