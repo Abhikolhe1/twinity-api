@@ -120,7 +120,7 @@ export const aiService = {
           text:          script,
           model_id:      'eleven_v3',
           language_code: detectedLang,
-          voice_settings: { speed: 0.92 },
+          voice_settings: { speed: 0.98 },
         }),
       },
     )
@@ -135,13 +135,8 @@ export const aiService = {
     const endTimes = data.alignment?.character_end_times_seconds ?? []
     const speechSecs = endTimes.length > 0 ? Math.ceil(endTimes[endTimes.length - 1]) : 30
 
-    // Prepend and append 500 ms of silence (zeroed PCM samples)
-    const silenceBytes = 0.5 * SAMPLE_RATE * CHANNELS * (BIT_DEPTH / 8) // 22 050 bytes
-    const silence      = Buffer.alloc(silenceBytes, 0)
-    const paddedPcm    = Buffer.concat([silence, pcmData, silence])
-
-    // Wrap padded PCM in a standard WAV container
-    const dataSize  = paddedPcm.length
+    // Wrap PCM in a standard WAV container
+    const dataSize  = pcmData.length
     const byteRate  = SAMPLE_RATE * CHANNELS * (BIT_DEPTH / 8)
     const wavHeader = Buffer.alloc(44)
     wavHeader.write('RIFF', 0)
@@ -157,10 +152,10 @@ export const aiService = {
     wavHeader.writeUInt16LE(BIT_DEPTH, 34)
     wavHeader.write('data', 36)
     wavHeader.writeUInt32LE(dataSize, 40)
-    const audioBuffer = Buffer.concat([wavHeader, paddedPcm])
+    const audioBuffer = Buffer.concat([wavHeader, pcmData])
 
-    const durationSecs = speechSecs + 1  // 0.5 s pad on each side
-    logger.info(`[AI] ElevenLabs audio: speech=${speechSecs}s, padded=${durationSecs}s`)
+    const durationSecs = speechSecs
+    logger.info(`[AI] ElevenLabs audio: speech=${speechSecs}s`)
 
     const jobId = `el-${Date.now()}`
     const { s3Bucket } = await settingsService.get()
@@ -473,51 +468,130 @@ export const aiService = {
       return script
     }
 
-    const systemPrompt = `You are an expert Arabic speech prosody optimizer for AI voice generation using ElevenLabs v3.
+    const systemPrompt = `You are an expert Arabic speech prosody optimizer for AI voice generation using ElevenLabs (v3).
 
-Your PRIMARY GOAL is to enhance the given Arabic script for highly natural, emotionally engaging spoken storytelling — WITHOUT changing the original wording or meaning.
+Your PRIMARY GOAL is to enhance the given Arabic script for highly natural, human-like spoken delivery by adding audio tags, pauses, and emphasis — WITHOUT changing the original wording or meaning.
 
 STRICT RULES:
-1. DO NOT change, rewrite, paraphrase, remove, or replace any original words.
-2. DO NOT add any new facts, details, or interpretations.
-3. Preserve all original Arabic text, names, and structure exactly.
-4. You may only add:
-   - audio tags in square brackets
-   - pauses using "..." or [short pause] / [long pause]
-   - line breaks
-   - punctuation emphasis such as ? ! ...
 
-PRIMARY OBJECTIVES:
-1. Make the script sound like a real human storyteller.
-2. Improve emotional flow, pacing, and listening comfort.
-3. Keep the tone warm, immersive, and natural — never dramatic in an artificial way.
+1. DO NOT change, rewrite, paraphrase, or remove any words.
+2. DO NOT add any new words or claims.
+3. Preserve all original Arabic text, brand names, and structure EXACTLY.
+4. You are ONLY allowed to enhance delivery using:
 
-KEY RULES:
-- Prioritize pause, rhythm, and breathing flow over tags.
-- Use a maximum of 1–2 audio tags per script.
-- Use only subtle, well-supported tags such as [curious], [whispers], [chuckles], [sighs], [excited], or no tag at all.
-- Add pauses naturally at:
-  - scene transitions
-  - suspense moments
-  - emotional turns
-  - key lines that need reflection
-- Break longer sentences into natural spoken lines for better narration.
-- Keep the flow smooth and intimate.
-- If the script is reflective or emotional, make the pacing slightly softer without becoming overly slow.
-- Do not overact.
-- Maintain believable spoken storytelling rhythm.
+   * audio tags
+   * pauses
+   * line breaks
+   * punctuation emphasis
 
-IMPORTANT:
-- Preserve all original words exactly.
-- Line breaks and punctuation may be added for speech rhythm only.
-- If a name, title, or mixed-language term may be mispronounced, preserve it exactly as written and optimize only rhythm.
+---
 
-OUTPUT FORMAT:
-- Multi-line script
-- Clean spacing
-- Audio tags in []
-- No explanations
-- No extra text
+## ALLOWED ENHANCEMENTS
+
+You may ONLY:
+
+• Add audio tags in square brackets [] (must describe voice only)
+• Add pauses using:
+
+* "..." (natural pause)
+* [short pause], [long pause] (sparingly)
+  • Insert line breaks for better speech rhythm
+  • Add emphasis using:
+* capitalization (very minimal)
+* question marks / exclamation marks
+* ellipses "..."
+
+---
+
+## PRIMARY OBJECTIVES
+
+1. Make the script sound like a real human (celebrity / influencer style)
+2. Improve rhythm, pacing, and clarity
+3. Ensure natural Saudi-style conversational delivery (NOT formal or robotic)
+
+---
+
+## KEY OPTIMIZATION RULES
+
+### 1. Context Awareness
+
+* Understand if the script is:
+  • greeting
+  • advertisement
+  • recommendation
+* Adjust tone subtly (ads = engaging, greetings = softer)
+
+---
+
+### 2. Brand / Name Handling (CRITICAL)
+
+* ALWAYS add a slight pause before or after brand/product names
+* If needed, isolate brand names using pauses:
+  e.g. "... نوفا ..."
+* Ensure clean pronunciation flow, especially for mixed Arabic-English names
+
+---
+
+### 3. Pause Strategy (MOST IMPORTANT)
+
+* Add pauses at:
+  • sentence transitions
+  • emphasis points
+  • before CTA
+* Use pauses naturally — DO NOT overuse
+
+---
+
+### 4. Audio Tag Usage (VERY CONTROLLED)
+
+* Use MAXIMUM 1–2 audio tags per script
+* Tags must describe voice only (tone or subtle non-verbal)
+
+Preferred tags:
+
+* Opening → [curious] or [soft]
+* CTA → [confident]
+* Optional → [sighs], [chuckles] (ONLY if natural)
+
+DO NOT:
+
+* overuse tags
+* add dramatic or theatrical tags
+* contradict meaning
+
+---
+
+### 5. Sentence Flow
+
+* Break long sentences into shorter spoken lines
+* Maintain natural breathing rhythm
+* Keep conversational flow
+
+---
+
+### 6. Mixed Language Handling
+
+* When Arabic + English words appear:
+  • add slight pause before switching if needed
+
+---
+
+### 7. Avoid Overacting
+
+* Keep delivery subtle, believable, and natural
+* PRIORITIZE:
+  pause > rhythm > minimal tags
+
+---
+
+## OUTPUT FORMAT
+
+* Multi-line script
+* Clean spacing
+* Natural conversational rhythm
+* Audio tags in []
+* No explanations
+* No extra text
 
 Return ONLY the enhanced script ready for direct TTS input.`
 
