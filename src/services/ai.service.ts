@@ -429,4 +429,95 @@ export const aiService = {
     logger.info('[AI] Script improved successfully')
     return result
   },
+
+  /**
+   * OpenAI GPT-4o — enhances an Arabic script with prosody markers for ElevenLabs v3 TTS.
+   * Adds pauses, audio tags, and line breaks for natural spoken delivery without
+   * changing any original words. Falls back to the original script when key is not set.
+   */
+  async enhanceScriptForTTS(script: string): Promise<string> {
+    const { openaiKey } = await settingsService.get()
+    if (!openaiKey) {
+      logger.warn('[AI] OpenAI key not set — skipping TTS prosody enhancement')
+      return script
+    }
+
+    const systemPrompt = `You are an expert Arabic speech prosody optimizer for AI voice generation using ElevenLabs v3.
+
+Your PRIMARY GOAL is to enhance the given Arabic script for highly natural, emotionally engaging spoken storytelling — WITHOUT changing the original wording or meaning.
+
+STRICT RULES:
+1. DO NOT change, rewrite, paraphrase, remove, or replace any original words.
+2. DO NOT add any new facts, details, or interpretations.
+3. Preserve all original Arabic text, names, and structure exactly.
+4. You may only add:
+   - audio tags in square brackets
+   - pauses using "..." or [short pause] / [long pause]
+   - line breaks
+   - punctuation emphasis such as ? ! ...
+
+PRIMARY OBJECTIVES:
+1. Make the script sound like a real human storyteller.
+2. Improve emotional flow, pacing, and listening comfort.
+3. Keep the tone warm, immersive, and natural — never dramatic in an artificial way.
+
+KEY RULES:
+- Prioritize pause, rhythm, and breathing flow over tags.
+- Use a maximum of 1–2 audio tags per script.
+- Use only subtle, well-supported tags such as [curious], [whispers], [chuckles], [sighs], [excited], or no tag at all.
+- Add pauses naturally at:
+  - scene transitions
+  - suspense moments
+  - emotional turns
+  - key lines that need reflection
+- Break longer sentences into natural spoken lines for better narration.
+- Keep the flow smooth and intimate.
+- If the script is reflective or emotional, make the pacing slightly softer without becoming overly slow.
+- Do not overact.
+- Maintain believable spoken storytelling rhythm.
+
+IMPORTANT:
+- Preserve all original words exactly.
+- Line breaks and punctuation may be added for speech rhythm only.
+- If a name, title, or mixed-language term may be mispronounced, preserve it exactly as written and optimize only rhythm.
+
+OUTPUT FORMAT:
+- Multi-line script
+- Clean spacing
+- Audio tags in []
+- No explanations
+- No extra text
+
+Return ONLY the enhanced script ready for direct TTS input.`
+
+    logger.info('[AI] Enhancing script prosody via GPT-4o')
+    const res = await fetch(`${OPENAI_BASE}/v1/chat/completions`, {
+      method:  'POST',
+      headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model:      'gpt-4o',
+        max_tokens: 500,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user',   content: script },
+        ],
+      }),
+    })
+
+    if (!res.ok) {
+      const err = await res.text()
+      logger.warn(`[AI] GPT-4o prosody enhancement failed (${res.status}): ${err} — using original script`)
+      return script
+    }
+
+    const data     = await res.json() as { choices?: Array<{ message: { content: string } }> }
+    const enhanced = data.choices?.[0]?.message?.content?.trim()
+    if (!enhanced) {
+      logger.warn('[AI] GPT-4o returned empty prosody response — using original script')
+      return script
+    }
+
+    logger.info('[AI] Script prosody enhanced successfully')
+    return enhanced
+  },
 }

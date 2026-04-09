@@ -137,12 +137,16 @@ async function processJob(jobId: string): Promise<void> {
     // Limit script to 40 words to keep audio concise for Creatify Aurora
     const MAX_WORDS = 40
     const scriptWords = job.script.trim().split(/\s+/)
-    const ttsScript = scriptWords.length > MAX_WORDS
+    const truncatedScript = scriptWords.length > MAX_WORDS
       ? scriptWords.slice(0, MAX_WORDS).join(' ')
       : job.script
     if (scriptWords.length > MAX_WORDS) {
       logger.warn(`[Queue] Job ${job.referenceId} — script truncated from ${scriptWords.length} to ${MAX_WORDS} words`)
     }
+
+    // Enhance script with Arabic prosody markers for natural TTS delivery
+    const ttsScript = await aiService.enhanceScriptForTTS(truncatedScript)
+    logger.info(`[Queue] Job ${job.referenceId} — prosody-enhanced script ready`)
 
     const voice = await aiService.generateVoice(celeb.voiceModelId, ttsScript, celeb.slug)
     job.voiceJobId    = voice.jobId
