@@ -104,8 +104,8 @@ export const aiService = {
     const endTimes = data.alignment?.character_end_times_seconds ?? []
     const speechSecs = endTimes.length > 0 ? Math.ceil(endTimes[endTimes.length - 1]) : 30
 
-    // Prepend and append 2 s of silence (zeroed PCM samples)
-    const silenceBytes = 2 * SAMPLE_RATE * CHANNELS * (BIT_DEPTH / 8) // 88 200 bytes
+    // Prepend and append 500 ms of silence (zeroed PCM samples)
+    const silenceBytes = 0.5 * SAMPLE_RATE * CHANNELS * (BIT_DEPTH / 8) // 22 050 bytes
     const silence      = Buffer.alloc(silenceBytes, 0)
     const paddedPcm    = Buffer.concat([silence, pcmData, silence])
 
@@ -128,7 +128,7 @@ export const aiService = {
     wavHeader.writeUInt32LE(dataSize, 40)
     const audioBuffer = Buffer.concat([wavHeader, paddedPcm])
 
-    const durationSecs = speechSecs + 4  // 2 s pad on each side
+    const durationSecs = speechSecs + 1  // 0.5 s pad on each side
     logger.info(`[AI] ElevenLabs audio: speech=${speechSecs}s, padded=${durationSecs}s`)
 
     const jobId = `el-${Date.now()}`
