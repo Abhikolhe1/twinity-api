@@ -119,8 +119,7 @@ export const aiService = {
         body:    JSON.stringify({
           text:          script,
           model_id:      'eleven_v3',
-          language_code: detectedLang,
-          voice_settings: { speed: 0.98 },
+          language_code: detectedLang
         }),
       },
     )
@@ -535,8 +534,8 @@ You may ONLY:
 ### 3. Pause Strategy (MOST IMPORTANT)
 
 * Add pauses at:
-  • sentence transitions
-  • emphasis points
+  • at brand or any other names
+  • emphasis points (ONLY WHEN REQUIRED)
   • before CTA
 * Use pauses naturally — DO NOT overuse
 
