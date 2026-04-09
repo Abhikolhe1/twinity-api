@@ -60,6 +60,29 @@ export interface CreatifyResult { jobId: string; status: 'submitted' | 'stub' }
 // ─── OpenAI API ───────────────────────────────────────────────────────────────
 const OPENAI_BASE = 'https://api.openai.com'
 
+// ─── Language detector ────────────────────────────────────────────────────────
+// Returns an ISO 639-1 code based on Unicode character ranges in the text.
+// Arabic (0600–06FF) > 30 % of non-whitespace chars → "ar", else → "en".
+// Extend the map below to support additional scripts as needed.
+const SCRIPT_PATTERNS: Array<{ re: RegExp; code: string }> = [
+  { re: /[\u0600-\u06FF]/g, code: 'ar' },  // Arabic
+  { re: /[\u0400-\u04FF]/g, code: 'ru' },  // Cyrillic
+  { re: /[\u4E00-\u9FFF]/g, code: 'zh' },  // CJK (Chinese)
+  { re: /[\u3040-\u30FF]/g, code: 'ja' },  // Hiragana / Katakana
+  { re: /[\uAC00-\uD7AF]/g, code: 'ko' },  // Korean Hangul
+  { re: /[\u0900-\u097F]/g, code: 'hi' },  // Devanagari (Hindi)
+]
+
+function detectLanguage(text: string): string {
+  const total = text.replace(/\s/g, '').length
+  if (total === 0) return 'en'
+  for (const { re, code } of SCRIPT_PATTERNS) {
+    const count = (text.match(re) ?? []).length
+    if (count / total > 0.3) return code
+  }
+  return 'en'
+}
+
 // ─── Exported service ─────────────────────────────────────────────────────────
 
 export const aiService = {
@@ -85,12 +108,20 @@ export const aiService = {
     const CHANNELS    = 1
     const BIT_DEPTH   = 16
 
+    const detectedLang = detectLanguage(script)
+    logger.info(`[AI] Detected script language: ${detectedLang}`)
+
     const res = await fetch(
       `${ELEVENLABS_BASE}/text-to-speech/${celebrityVoiceId}/with-timestamps?output_format=pcm_22050`,
       {
         method:  'POST',
         headers: { 'xi-api-key': elevenLabsKey, 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ text: script, model_id: 'eleven_v3', voice_settings: { speed: 0.96 } }),
+        body:    JSON.stringify({
+          text:          script,
+          model_id:      'eleven_v3',
+          language_code: detectedLang,
+          voice_settings: { speed: 0.92 },
+        }),
       },
     )
     if (!res.ok) throw new Error(`ElevenLabs failed (${res.status})`)
