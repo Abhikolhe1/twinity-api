@@ -80,11 +80,19 @@ export const aiService = {
       return { jobId: `stub-voice-${Date.now()}`, audioUrl: 'https://stub-audio.mp3', durationSecs: 30 }
     }
 
-    const res = await fetch(`${ELEVENLABS_BASE}/text-to-speech/${celebrityVoiceId}/with-timestamps`, {
-      method: 'POST',
-      headers: { 'xi-api-key': elevenLabsKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: script, model_id: 'eleven_v3', voice_settings: { speed: 0.9 } }),
-    })
+    // Request raw PCM so we can pad silence in pure Node.js (no ffmpeg needed)
+    const SAMPLE_RATE = 22050
+    const CHANNELS    = 1
+    const BIT_DEPTH   = 16
+
+    const res = await fetch(
+      `${ELEVENLABS_BASE}/text-to-speech/${celebrityVoiceId}/with-timestamps?output_format=pcm_22050`,
+      {
+        method:  'POST',
+        headers: { 'xi-api-key': elevenLabsKey, 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ text: script, model_id: 'eleven_v3', voice_settings: { speed: 0.96 } }),
+      },
+    )
     if (!res.ok) throw new Error(`ElevenLabs failed (${res.status})`)
 
     const data = await res.json() as {
@@ -92,15 +100,41 @@ export const aiService = {
       alignment: { character_end_times_seconds: number[] }
     }
 
-    const audioBuffer = Buffer.from(data.audio_base64, 'base64')
-    const endTimes    = data.alignment?.character_end_times_seconds ?? []
-    const durationSecs = endTimes.length > 0 ? Math.ceil(endTimes[endTimes.length - 1]) : 30
-    logger.info(`[AI] ElevenLabs audio duration: ${durationSecs}s`)
+    const pcmData  = Buffer.from(data.audio_base64, 'base64')
+    const endTimes = data.alignment?.character_end_times_seconds ?? []
+    const speechSecs = endTimes.length > 0 ? Math.ceil(endTimes[endTimes.length - 1]) : 30
+
+    // Prepend and append 2 s of silence (zeroed PCM samples)
+    const silenceBytes = 2 * SAMPLE_RATE * CHANNELS * (BIT_DEPTH / 8) // 88 200 bytes
+    const silence      = Buffer.alloc(silenceBytes, 0)
+    const paddedPcm    = Buffer.concat([silence, pcmData, silence])
+
+    // Wrap padded PCM in a standard WAV container
+    const dataSize  = paddedPcm.length
+    const byteRate  = SAMPLE_RATE * CHANNELS * (BIT_DEPTH / 8)
+    const wavHeader = Buffer.alloc(44)
+    wavHeader.write('RIFF', 0)
+    wavHeader.writeUInt32LE(36 + dataSize, 4)
+    wavHeader.write('WAVE', 8)
+    wavHeader.write('fmt ', 12)
+    wavHeader.writeUInt32LE(16, 16)
+    wavHeader.writeUInt16LE(1, 20)                            // PCM
+    wavHeader.writeUInt16LE(CHANNELS, 22)
+    wavHeader.writeUInt32LE(SAMPLE_RATE, 24)
+    wavHeader.writeUInt32LE(byteRate, 28)
+    wavHeader.writeUInt16LE(CHANNELS * (BIT_DEPTH / 8), 32)  // block align
+    wavHeader.writeUInt16LE(BIT_DEPTH, 34)
+    wavHeader.write('data', 36)
+    wavHeader.writeUInt32LE(dataSize, 40)
+    const audioBuffer = Buffer.concat([wavHeader, paddedPcm])
+
+    const durationSecs = speechSecs + 4  // 2 s pad on each side
+    logger.info(`[AI] ElevenLabs audio: speech=${speechSecs}s, padded=${durationSecs}s`)
 
     const jobId = `el-${Date.now()}`
     const { s3Bucket } = await settingsService.get()
-    const key = `celebrities/${celebSlug}/generated-audio/${jobId}.mp3`
-    const upload = await s3Service.upload(s3Bucket, key, audioBuffer, 'audio/mpeg')
+    const key    = `celebrities/${celebSlug}/generated-audio/${jobId}.wav`
+    const upload = await s3Service.upload(s3Bucket, key, audioBuffer, 'audio/wav')
     const audioUrl = upload.stub
       ? upload.url
       : await s3Service.getPresignedUrl(s3Bucket, upload.key, 7200)
