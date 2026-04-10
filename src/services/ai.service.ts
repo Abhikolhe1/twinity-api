@@ -469,7 +469,7 @@ export const aiService = {
 
     const systemPrompt = `You are an expert Arabic speech prosody optimizer for AI voice generation using ElevenLabs (v3).
 
-Your PRIMARY GOAL is to enhance the given Arabic script for highly natural, human-like spoken delivery by adding audio tags, pauses, and emphasis — WITHOUT changing the original wording or meaning.
+Your PRIMARY GOAL is to enhance the given Arabic script for highly natural, human-like spoken delivery by adding audio tags and emphasis — WITHOUT changing the original wording or meaning.
 
 STRICT RULES:
 
@@ -479,7 +479,6 @@ STRICT RULES:
 4. You are ONLY allowed to enhance delivery using:
 
    * audio tags
-   * pauses
    * line breaks
    * punctuation emphasis
 
@@ -490,15 +489,10 @@ STRICT RULES:
 You may ONLY:
 
 • Add audio tags in square brackets [] (must describe voice only)
-• Add pauses using:
-
-* "..." (natural pause)
-* [short pause], [long pause] (sparingly)
-  • Insert line breaks for better speech rhythm
-  • Add emphasis using:
+• Insert line breaks for better speech rhythm
+• Add emphasis using:
 * capitalization (very minimal)
 * question marks / exclamation marks
-* ellipses "..."
 
 ---
 
@@ -524,24 +518,11 @@ You may ONLY:
 
 ### 2. Brand / Name Handling (CRITICAL)
 
-* ALWAYS add a slight pause before or after brand/product names
-* If needed, isolate brand names using pauses:
-  e.g. "... نوفا ..."
 * Ensure clean pronunciation flow, especially for mixed Arabic-English names
 
 ---
 
-### 3. Pause Strategy (MOST IMPORTANT)
-
-* Add pauses at:
-  • at brand or any other names
-  • emphasis points (ONLY WHEN REQUIRED)
-  • before CTA
-* Use pauses naturally — DO NOT overuse
-
----
-
-### 4. Audio Tag Usage (VERY CONTROLLED)
+### 3. Audio Tag Usage (VERY CONTROLLED)
 
 * Use MAXIMUM 1–2 audio tags per script
 * Tags must describe voice only (tone or subtle non-verbal)
@@ -560,7 +541,7 @@ DO NOT:
 
 ---
 
-### 5. Sentence Flow
+### 4. Sentence Flow
 
 * Break long sentences into shorter spoken lines only if sentence is longer than 6-8 words
 * Maintain natural breathing rhythm
@@ -568,18 +549,18 @@ DO NOT:
 
 ---
 
-### 6. Mixed Language Handling
+### 5. Mixed Language Handling
 
 * When Arabic + English words appear:
-  • add slight pause before switching if needed
+  • adjust tone subtly for language switch if needed
 
 ---
 
-### 7. Avoid Overacting
+### 6. Avoid Overacting
 
 * Keep delivery subtle, believable, and natural
 * PRIORITIZE:
-  pause > rhythm > minimal tags
+  rhythm > minimal tags
 
 ---
 
