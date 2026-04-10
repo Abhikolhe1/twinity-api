@@ -562,7 +562,7 @@ DO NOT:
 
 ### 5. Sentence Flow
 
-* Break long sentences into shorter spoken lines
+* Break long sentences into shorter spoken lines only if sentence is longer than 6-8 words
 * Maintain natural breathing rhythm
 * Keep conversational flow
 
