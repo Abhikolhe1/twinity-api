@@ -23,6 +23,9 @@ interface CachedSettings {
   awsSecretAccessKey: string
   awsRegion: string
   s3Bucket: string
+  scriptImprovePrompt: string
+  scriptEnhancePrompt: string
+  thumbnailProcessPrompt: string
 }
 
 let _cache: CachedSettings | null = null
@@ -50,6 +53,9 @@ async function load(): Promise<CachedSettings> {
       awsSecretAccessKey: d.awsSecretAccessKey  || env.aws.secretAccessKey  || '',
       awsRegion:          d.awsRegion           || env.aws.region           || 'us-east-1',
       s3Bucket:           d.s3Bucket            || env.aws.s3Buckets.assets || 'twinity-storage',
+      scriptImprovePrompt:    d.scriptImprovePrompt    || '',
+      scriptEnhancePrompt:    d.scriptEnhancePrompt    || '',
+      thumbnailProcessPrompt: d.thumbnailProcessPrompt || '',
     }
     _cacheAt = now
   } catch (err) {
@@ -69,6 +75,9 @@ async function load(): Promise<CachedSettings> {
       awsSecretAccessKey: env.aws.secretAccessKey  || '',
       awsRegion:          env.aws.region           || 'us-east-1',
       s3Bucket:           env.aws.s3Buckets.assets || 'twinity-storage',
+      scriptImprovePrompt:    '',
+      scriptEnhancePrompt:    '',
+      thumbnailProcessPrompt: '',
     }
     _cacheAt = now
   }

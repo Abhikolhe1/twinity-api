@@ -18,6 +18,9 @@ export interface ISettings extends Document {
   awsRegion: string
   s3Bucket: string
   blockedWords: string[]
+  scriptImprovePrompt: string
+  scriptEnhancePrompt: string
+  thumbnailProcessPrompt: string
 }
 
 const SettingsSchema = new Schema<ISettings>(
@@ -38,7 +41,10 @@ const SettingsSchema = new Schema<ISettings>(
     awsSecretAccessKey: { type: String, default: '' },
     awsRegion:          { type: String, default: 'us-east-1' },
     s3Bucket:           { type: String, default: 'twinity-storage' },
-    blockedWords:       { type: [String], default: [] },
+    blockedWords:           { type: [String], default: [] },
+    scriptImprovePrompt:    { type: String, default: '' },
+    scriptEnhancePrompt:    { type: String, default: '' },
+    thumbnailProcessPrompt: { type: String, default: '' },
   },
   { timestamps: true }
 )

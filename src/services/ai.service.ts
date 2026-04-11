@@ -408,13 +408,18 @@ export const aiService = {
     productType: string
     purpose?: string
   }): Promise<string> {
-    const { openaiKey } = await settingsService.get()
+    const settings = await settingsService.get()
+    const { openaiKey } = settings
     if (!openaiKey) {
       logger.warn('[AI] OpenAI key not set — returning original script')
       return params.script
     }
 
-    const systemPrompt = 'You are a professional copywriter specialising in celebrity video advertisements. Improve scripts to be more engaging, natural, and persuasive while preserving the core message. CRITICAL: the output MUST be 40 words or fewer — this is a hard limit imposed by the video generation platform. Count every word carefully before responding. Return ONLY the improved script text with no preamble, explanation, or formatting marks.'
+    const systemPrompt = settings.scriptImprovePrompt?.trim()
+    if (!systemPrompt) {
+      logger.warn('[AI] scriptImprovePrompt not set — skipping script improvement')
+      return params.script
+    }
     const userPrompt = `Celebrity: ${params.celebrityName}\nProduct type: ${params.productType}${params.purpose ? `\nPurpose: ${params.purpose}` : ''}\n\nScript to improve (must stay within 40 words):\n${params.script}`
 
     logger.info(`[AI] Improving script via OpenAI for celebrity=${params.celebrityName}`)
@@ -461,119 +466,18 @@ export const aiService = {
    * changing any original words. Falls back to the original script when key is not set.
    */
   async enhanceScriptForTTS(script: string): Promise<string> {
-    const { openaiKey } = await settingsService.get()
+    const settings = await settingsService.get()
+    const { openaiKey } = settings
     if (!openaiKey) {
       logger.warn('[AI] OpenAI key not set — skipping TTS prosody enhancement')
       return script
     }
 
-    const systemPrompt = `You are an expert Arabic speech prosody optimizer for AI voice generation using ElevenLabs (v3).
-
-Your PRIMARY GOAL is to enhance the given Arabic script for highly natural, human-like spoken delivery by adding audio tags and emphasis — WITHOUT changing the original wording or meaning.
-
-STRICT RULES:
-
-1. DO NOT change, rewrite, paraphrase, or remove any words.
-2. DO NOT add any new words or claims.
-3. Preserve all original Arabic text, brand names, and structure EXACTLY.
-4. You are ONLY allowed to enhance delivery using:
-
-   * audio tags
-   * line breaks
-   * punctuation emphasis
-
----
-
-## ALLOWED ENHANCEMENTS
-
-You may ONLY:
-
-• Add audio tags in square brackets [] (must describe voice only)
-• Insert line breaks for better speech rhythm
-• Add emphasis using:
-* capitalization (very minimal)
-* question marks / exclamation marks
-
----
-
-## PRIMARY OBJECTIVES
-
-1. Make the script sound like a real human (celebrity / influencer style)
-2. Improve rhythm, pacing, and clarity
-3. Ensure natural Saudi-style conversational delivery (NOT formal or robotic)
-
----
-
-## KEY OPTIMIZATION RULES
-
-### 1. Context Awareness
-
-* Understand if the script is:
-  • greeting
-  • advertisement
-  • recommendation
-* Adjust tone subtly (ads = engaging, greetings = softer)
-
----
-
-### 2. Brand / Name Handling (CRITICAL)
-
-* Ensure clean pronunciation flow, especially for mixed Arabic-English names
-
----
-
-### 3. Audio Tag Usage (VERY CONTROLLED)
-
-* Use MAXIMUM 1–2 audio tags per script
-* Tags must describe voice only (tone or subtle non-verbal)
-
-Preferred tags:
-
-* Opening → [curious] or [soft]
-* CTA → [confident]
-* Optional → [sighs], [chuckles] (ONLY if natural)
-
-DO NOT:
-
-* overuse tags
-* add dramatic or theatrical tags
-* contradict meaning
-
----
-
-### 4. Sentence Flow
-
-* Break long sentences into shorter spoken lines only if sentence is longer than 6-8 words
-* Maintain natural breathing rhythm
-* Keep conversational flow
-
----
-
-### 5. Mixed Language Handling
-
-* When Arabic + English words appear:
-  • adjust tone subtly for language switch if needed
-
----
-
-### 6. Avoid Overacting
-
-* Keep delivery subtle, believable, and natural
-* PRIORITIZE:
-  rhythm > minimal tags
-
----
-
-## OUTPUT FORMAT
-
-* Multi-line script
-* Clean spacing
-* Natural conversational rhythm
-* Audio tags in []
-* No explanations
-* No extra text
-
-Return ONLY the enhanced script ready for direct TTS input.`
+    const systemPrompt = settings.scriptEnhancePrompt?.trim()
+    if (!systemPrompt) {
+      logger.warn('[AI] scriptEnhancePrompt not set — skipping TTS prosody enhancement')
+      return script
+    }
 
     logger.info('[AI] Enhancing script prosody via GPT-4o')
     const res = await fetch(`${OPENAI_BASE}/v1/chat/completions`, {
@@ -604,5 +508,80 @@ Return ONLY the enhanced script ready for direct TTS input.`
 
     logger.info('[AI] Script prosody enhanced successfully')
     return enhanced
+  },
+
+  /**
+   * Gemini — process / enhance a celebrity thumbnail image using the
+   * thumbnailProcessPrompt stored in global settings.
+   * Accepts a base64 data-URL, returns a base64 data-URL of the result.
+   * Falls back to the original image when Gemini key is not set or the call fails.
+   */
+  async processThumbnailImage(dataUrl: string): Promise<string> {
+    const { geminiApiKey, thumbnailProcessPrompt } = await settingsService.get()
+
+    if (!geminiApiKey) {
+      logger.warn('[AI] Gemini key not set — skipping thumbnail processing')
+      return dataUrl
+    }
+
+    const instruction = thumbnailProcessPrompt?.trim()
+    if (!instruction) {
+      logger.warn('[AI] thumbnailProcessPrompt is empty — skipping thumbnail processing')
+      return dataUrl
+    }
+
+    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/)
+    if (!match) {
+      logger.warn('[AI] processThumbnailImage: invalid data URL format')
+      return dataUrl
+    }
+    const mimeType  = match[1]
+    const base64Data = match[2]
+
+    logger.info('[AI] Processing thumbnail via Gemini image generation')
+
+    const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta'
+    const model = 'gemini-2.0-flash-preview-image-generation'
+
+    const res = await fetch(
+      `${GEMINI_BASE}/models/${model}:generateContent?key=${geminiApiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            role: 'user',
+            parts: [
+              { text: instruction },
+              { inline_data: { mime_type: mimeType, data: base64Data } },
+            ],
+          }],
+          generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
+        }),
+      },
+    )
+
+    if (!res.ok) {
+      const err = await res.text()
+      logger.warn(`[AI] Gemini thumbnail processing failed (${res.status}): ${err} — using original`)
+      return dataUrl
+    }
+
+    const data = await res.json() as {
+      candidates?: Array<{
+        content?: { parts?: Array<{ inline_data?: { mime_type: string; data: string } }> }
+      }>
+    }
+
+    const parts = data.candidates?.[0]?.content?.parts ?? []
+    const imagePart = parts.find(p => p.inline_data?.mime_type?.startsWith('image/'))
+
+    if (!imagePart?.inline_data) {
+      logger.warn('[AI] Gemini returned no image part — using original thumbnail')
+      return dataUrl
+    }
+
+    logger.info('[AI] Gemini thumbnail processed successfully')
+    return `data:${imagePart.inline_data.mime_type};base64,${imagePart.inline_data.data}`
   },
 }

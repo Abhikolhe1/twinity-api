@@ -8,6 +8,16 @@ import { settingsService } from '../services/settings.service'
 import { logger } from '../config/logger'
 
 /**
+ * When processThumbnail is true and thumbnailUrl is a fresh base64 data URL,
+ * run the image through Gemini using the thumbnailProcessPrompt from settings.
+ */
+async function maybeProcessThumbnail(thumbnailUrl: string | undefined, processThumbnail: boolean): Promise<string | undefined> {
+  if (!processThumbnail) return thumbnailUrl
+  if (!thumbnailUrl?.startsWith('data:')) return thumbnailUrl
+  return aiService.processThumbnailImage(thumbnailUrl)
+}
+
+/**
  * If thumbnailUrl is a base64 data URL (set by the admin file picker), convert
  * it to JPEG and upload to S3.
  */
@@ -75,7 +85,10 @@ export async function getCelebrity(req: Request, res: Response, next: NextFuncti
 export async function createCelebrity(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const body = { ...req.body }
+    const processThumbnail = Boolean(body.processThumbnail)
+    delete body.processThumbnail
     const slug = body.slug || body.name?.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+    body.thumbnailUrl = await maybeProcessThumbnail(body.thumbnailUrl, processThumbnail)
     body.thumbnailUrl = await resolveThumbnailUrl(body.thumbnailUrl, slug)
     const celeb = await Celebrity.create(body)
     res.status(201).json({ success: true, data: await signDoc(celeb.toObject()) })
@@ -89,6 +102,9 @@ export async function updateCelebrity(req: Request, res: Response, next: NextFun
     const existing = await Celebrity.findById(req.params.id)
     if (!existing) throw new AppError('Celebrity not found', 404)
     const body = { ...req.body }
+    const processThumbnail = Boolean(body.processThumbnail)
+    delete body.processThumbnail
+    body.thumbnailUrl = await maybeProcessThumbnail(body.thumbnailUrl, processThumbnail)
     body.thumbnailUrl = await resolveThumbnailUrl(body.thumbnailUrl, existing.slug)
     const celeb = await Celebrity.findByIdAndUpdate(req.params.id, body, { new: true, runValidators: true, lean: true })
     res.json({ success: true, data: await signDoc(celeb as Record<string, unknown>) })
