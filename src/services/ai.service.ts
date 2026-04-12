@@ -372,7 +372,6 @@ export const aiService = {
       headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'gpt-5',
-        max_tokens: 800,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user',   content: userPrompt },
@@ -431,7 +430,6 @@ export const aiService = {
       },
       body: JSON.stringify({
         model: 'gpt-5',
-        max_tokens: 60,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user',   content: userPrompt },
@@ -485,7 +483,6 @@ export const aiService = {
       headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model:      'gpt-5',
-        max_tokens: 500,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user',   content: script },
