@@ -371,7 +371,7 @@ export const aiService = {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5',
         max_tokens: 800,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -430,7 +430,7 @@ export const aiService = {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5',
         max_tokens: 60,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -484,7 +484,7 @@ export const aiService = {
       method:  'POST',
       headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model:      'gpt-4o',
+        model:      'gpt-5',
         max_tokens: 500,
         messages: [
           { role: 'system', content: systemPrompt },
