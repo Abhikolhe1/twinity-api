@@ -541,7 +541,7 @@ export const aiService = {
     logger.info('[AI] Processing thumbnail via Gemini image generation')
 
     const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta'
-    const model = 'gemini-2.0-flash-preview-image-generation'
+    const model = 'gemini-3-pro-image-preview'
 
     const res = await fetch(
       `${GEMINI_BASE}/models/${model}:generateContent?key=${geminiApiKey}`,
