@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { createJob, getMyJobs, getMyStats, getJob, cancelJob, submitBookCall, improveScript, suggestScenePrompts, generateImage, uploadAsset, adminListJobs, adminUpdateJobStatus, adminEnableDownload, adminApproveJob, adminRejectJob } from '../controllers/videoJob.controller'
+import { createJob, getMyJobs, getMyStats, getJob, cancelJob, submitBookCall, improveScript, suggestScenePrompts, generateImage, uploadAsset, getJobDownloadUrl, adminListJobs, adminUpdateJobStatus, adminEnableDownload, adminApproveJob, adminRejectJob } from '../controllers/videoJob.controller'
 import { requireAuth } from '../middleware/auth'
 import { requireAdmin, requirePermission } from '../middleware/adminAuth'
 
@@ -16,6 +16,7 @@ router.get('/my', requireAuth, getMyJobs)
 router.get('/my/:referenceId', requireAuth, getJob)
 router.post('/my/:referenceId/book-call', requireAuth, submitBookCall)
 router.post('/my/:referenceId/cancel', requireAuth, cancelJob)
+router.get('/my/:referenceId/download-url', requireAuth, getJobDownloadUrl)
 
 // Admin routes
 router.get('/admin', requireAdmin, adminListJobs)

@@ -129,6 +129,26 @@ export const s3Service = {
   },
 
   /**
+   * Generate a short-lived presigned URL that forces browser download.
+   * Sets ResponseContentDisposition so S3 returns Content-Disposition: attachment.
+   */
+  async getDownloadPresignedUrl(bucket: string, key: string, filename: string, expiresIn = 300): Promise<string | null> {
+    const result = await buildClient()
+    if (!result) return null
+    const { client } = result
+    const url = await getSignedUrl(
+      client,
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        ResponseContentDisposition: `attachment; filename="${filename}"`,
+      }),
+      { expiresIn },
+    )
+    return url
+  },
+
+  /**
    * One-off short-lived presigned URL — bypasses the long-lived cache.
    * Use this when an external service must download the file within a known
    * short window (e.g. Creatify Aurora needs the image for ~2 hours).

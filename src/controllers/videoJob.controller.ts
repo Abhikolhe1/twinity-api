@@ -511,6 +511,35 @@ export async function uploadAsset(req: AuthRequest, res: Response, next: NextFun
   }
 }
 
+// Customer — stream the video file so the browser downloads it (avoids S3 CORS + cross-origin download-attribute restriction)
+export async function getJobDownloadUrl(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const job = await VideoJob.findOne({ referenceId: req.params.referenceId, userId: req.userId }).lean()
+    if (!job) throw new AppError('Job not found', 404)
+    if (!job.downloadEnabled) throw new AppError('Download not enabled for this job', 403)
+
+    const rawUrl = job.finalVideoUrl || job.watermarkedUrl
+    if (!rawUrl) throw new AppError('No video file available yet', 404)
+
+    // Resolve a fresh presigned URL so the server-side fetch always works
+    const fetchUrl = (await s3Service.presignIfS3(rawUrl)) ?? rawUrl
+
+    const upstream = await fetch(fetchUrl)
+    if (!upstream.ok) throw new AppError('Could not retrieve video file', 502)
+
+    const filename = `${job.referenceId}.mp4`
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+    res.setHeader('Content-Type', upstream.headers.get('content-type') ?? 'video/mp4')
+    const contentLength = upstream.headers.get('content-length')
+    if (contentLength) res.setHeader('Content-Length', contentLength)
+
+    const buffer = Buffer.from(await upstream.arrayBuffer())
+    res.send(buffer)
+  } catch (err) {
+    next(err)
+  }
+}
+
 // Admin — enable download
 export async function adminEnableDownload(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
