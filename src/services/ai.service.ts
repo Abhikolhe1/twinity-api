@@ -550,7 +550,7 @@ export const aiService = {
             role: 'user',
             parts: [
               { text: instruction },
-              { inline_data: { mime_type: mimeType, data: base64Data } },
+              { inlineData: { mimeType, data: base64Data } },
             ],
           }],
           generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
@@ -566,19 +566,19 @@ export const aiService = {
 
     const data = await res.json() as {
       candidates?: Array<{
-        content?: { parts?: Array<{ inline_data?: { mime_type: string; data: string } }> }
+        content?: { parts?: Array<{ inlineData?: { mimeType: string; data: string } }> }
       }>
     }
 
     const parts = data.candidates?.[0]?.content?.parts ?? []
-    const imagePart = parts.find(p => p.inline_data?.mime_type?.startsWith('image/'))
+    const imagePart = parts.find(p => p.inlineData?.mimeType?.startsWith('image/'))
 
-    if (!imagePart?.inline_data) {
+    if (!imagePart?.inlineData) {
       logger.warn('[AI] Gemini returned no image part — using original thumbnail')
       return dataUrl
     }
 
     logger.info('[AI] Gemini thumbnail processed successfully')
-    return `data:${imagePart.inline_data.mime_type};base64,${imagePart.inline_data.data}`
+    return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`
   },
 }
