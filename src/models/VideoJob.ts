@@ -30,6 +30,7 @@ export interface IVideoJob extends Document {
   propImages?: string[]
   sceneNotes?: string
   backgroundImageUrl?: string
+  processedScript?: string
   errorMessage?: string
   deliveredAt?: Date
   createdAt: Date
@@ -70,6 +71,7 @@ const VideoJobSchema = new Schema<IVideoJob>(
     propImages:         [{ type: String }],
     sceneNotes:         { type: String },
     backgroundImageUrl: { type: String },
+    processedScript:    { type: String },
     errorMessage:       { type: String },
     deliveredAt:     { type: Date },
   },

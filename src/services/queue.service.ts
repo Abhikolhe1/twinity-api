@@ -148,6 +148,7 @@ async function processJob(jobId: string): Promise<void> {
     const ttsScript = await aiService.enhanceScriptForTTS(truncatedScript)
     logger.info(`[Queue] Job ${job.referenceId} — prosody-enhanced script ready`)
 
+    job.processedScript = ttsScript
     const voice = await aiService.generateVoice(celeb.voiceModelId, ttsScript, celeb.slug)
     job.voiceJobId    = voice.jobId
     job.voiceAudioUrl = voice.audioUrl
