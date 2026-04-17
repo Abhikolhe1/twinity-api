@@ -315,7 +315,7 @@ export const aiService = {
       prompt,
       image_urls:     [params.imageUrl],
       audio_urls:     [params.audioUrl],
-      generate_audio: false,
+      generate_audio: true,
       resolution:     '720p',
       duration:       'auto',
     }
