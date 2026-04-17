@@ -23,7 +23,7 @@ export interface IVideoJob extends Document {
   previewUrl?: string
   finalVideoUrl?: string
   watermarkedUrl?: string
-  creatifyJobId?: string        // Creatify Aurora job ID
+  seedanceRequestId?: string    // fal.ai Seedance 2.0 queue request ID
   voiceJobId?: string           // jobId from ElevenLabs TTS
   voiceAudioUrl?: string       // S3 URL of generated voice audio
   // Scene settings (customer-provided context for video generation)
@@ -65,8 +65,8 @@ const VideoJobSchema = new Schema<IVideoJob>(
     previewUrl:      { type: String },
     finalVideoUrl:   { type: String },
     watermarkedUrl:  { type: String },
-    creatifyJobId:  { type: String },
-    voiceJobId:     { type: String },
+    seedanceRequestId: { type: String },
+    voiceJobId:        { type: String },
     voiceAudioUrl:      { type: String },
     propImages:         [{ type: String }],
     sceneNotes:         { type: String },
@@ -80,6 +80,6 @@ const VideoJobSchema = new Schema<IVideoJob>(
 
 VideoJobSchema.index({ userId: 1, status: 1 })
 VideoJobSchema.index({ status: 1 })
-VideoJobSchema.index({ creatifyJobId: 1 }, { sparse: true })
+VideoJobSchema.index({ seedanceRequestId: 1 }, { sparse: true })
 
 export const VideoJob = mongoose.model<IVideoJob>('VideoJob', VideoJobSchema)

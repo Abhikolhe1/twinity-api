@@ -14,7 +14,7 @@ export interface IProductType extends Document {
   durationAr: string
   useCases: string[]
   useCasesAr: string[]
-  creatifyPrompt: string
+  videoPrompt: string
   geminiSystemPrompt: string
   isActive: boolean
   order: number
@@ -35,7 +35,7 @@ const ProductTypeSchema = new Schema<IProductType>(
     durationAr:         { type: String, default: '' },
     useCases:           [{ type: String }],
     useCasesAr:         [{ type: String }],
-    creatifyPrompt:     { type: String, default: '' },
+    videoPrompt:        { type: String, default: '' },
     geminiSystemPrompt: { type: String, default: '' },
     isActive:           { type: Boolean, default: true },
     order:              { type: Number, default: 0 },

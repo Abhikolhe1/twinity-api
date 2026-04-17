@@ -36,10 +36,9 @@ export const env = {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
   },
   externalApis: {
-    elevenLabs:    process.env.ELEVENLABS_API_KEY  || '',
-    creatifyApiId: process.env.CREATIFY_API_ID     || '',
-    creatifyApiKey: process.env.CREATIFY_API_KEY   || '',
-    openai:        process.env.OPENAI_API_KEY      || '',
+    elevenLabs: process.env.ELEVENLABS_API_KEY || '',
+    falApiKey:  process.env.FAL_KEY            || '',
+    openai:     process.env.OPENAI_API_KEY     || '',
   },
   serverUrl: process.env.SERVER_URL || '',
   cors: {
