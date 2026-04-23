@@ -24,6 +24,7 @@ export interface IVideoJob extends Document {
   finalVideoUrl?: string
   watermarkedUrl?: string
   seedanceRequestId?: string    // fal.ai Seedance 2.0 queue request ID
+  syncLabsRequestId?: string    // fal.ai SyncLabs lipsync queue request ID
   voiceJobId?: string           // jobId from ElevenLabs TTS
   voiceAudioUrl?: string       // S3 URL of generated voice audio
   // Voice generation options
@@ -36,6 +37,7 @@ export interface IVideoJob extends Document {
   propImages?: string[]
   sceneNotes?: string
   backgroundImageUrl?: string
+  audioDuration?: number        // ElevenLabs audio length in seconds — passed to Seedance
   processedScript?: string
   errorMessage?: string
   deliveredAt?: Date
@@ -72,6 +74,7 @@ const VideoJobSchema = new Schema<IVideoJob>(
     finalVideoUrl:   { type: String },
     watermarkedUrl:  { type: String },
     seedanceRequestId: { type: String },
+    syncLabsRequestId: { type: String },
     voiceJobId:        { type: String },
     voiceAudioUrl:      { type: String },
     voiceModel:             { type: String },
@@ -81,6 +84,7 @@ const VideoJobSchema = new Schema<IVideoJob>(
     propImages:         [{ type: String }],
     sceneNotes:         { type: String },
     backgroundImageUrl: { type: String },
+    audioDuration:      { type: Number },
     processedScript:    { type: String },
     errorMessage:       { type: String },
     deliveredAt:     { type: Date },
@@ -91,5 +95,6 @@ const VideoJobSchema = new Schema<IVideoJob>(
 VideoJobSchema.index({ userId: 1, status: 1 })
 VideoJobSchema.index({ status: 1 })
 VideoJobSchema.index({ seedanceRequestId: 1 }, { sparse: true })
+VideoJobSchema.index({ syncLabsRequestId: 1 }, { sparse: true })
 
 export const VideoJob = mongoose.model<IVideoJob>('VideoJob', VideoJobSchema)

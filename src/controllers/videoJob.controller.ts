@@ -35,7 +35,7 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
     const { celebrityId, productType, purpose, templateId, script, tone, duration, aspectRatio, resolution, channels,
             propImages, sceneNotes, backgroundImageUrl,
             voiceModel, voiceSpeed, voiceChangeEnabled, voiceChangeSourceUrl,
-            voiceAudioUrl } = req.body
+            voiceAudioUrl, audioDuration } = req.body
 
     if (!voiceAudioUrl) throw new AppError('voiceAudioUrl is required — complete a voice preview before submitting', 400)
 
@@ -94,6 +94,7 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
       voiceChangeEnabled:     voiceChangeEnabled === true || voiceChangeEnabled === 'true' || undefined,
       voiceChangeSourceUrl:   voiceChangeSourceUrl   || undefined,
       voiceAudioUrl:          voiceAudioUrl          || undefined,
+      audioDuration:          audioDuration != null ? Number(audioDuration) : undefined,
     })
 
     // Increment celebrity order count
@@ -122,6 +123,8 @@ export async function previewVoice(req: AuthRequest, res: Response, next: NextFu
 
     let audioUrl: string
 
+    let durationSecs: number | undefined
+
     if (voiceChangeEnabled && voiceChangeSourceUrl) {
       const srcRes = await fetch(voiceChangeSourceUrl as string)
       if (!srcRes.ok) throw new AppError('Failed to fetch source audio', 400)
@@ -147,9 +150,10 @@ export async function previewVoice(req: AuthRequest, res: Response, next: NextFu
         { model: safeTTSModel, speed },
       )
       audioUrl = result.audioUrl
+      durationSecs = result.durationSecs
     }
 
-    res.json({ success: true, audioUrl })
+    res.json({ success: true, audioUrl, durationSecs })
   } catch (err) {
     next(err)
   }
