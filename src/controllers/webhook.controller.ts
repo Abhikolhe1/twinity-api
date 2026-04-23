@@ -14,22 +14,15 @@ import { settingsService } from '../services/settings.service'
 import { emailService } from '../services/email.service'
 import { logger } from '../config/logger'
 
-interface CreatifyWebhookPayload {
-  id?: string
-  status?: string
-  video_output?: string
-  failed_reason?: string
-}
-
 export async function creatifyWebhook(req: Request, res: Response): Promise<void> {
   try {
-    const payload = req.body as CreatifyWebhookPayload
+    const payload = req.body as Record<string, unknown>
     logger.info(`[Webhook] Creatify raw payload: ${JSON.stringify(payload)}`)
 
-    const jobId    = payload.id            ?? ''
-    const status   = payload.status        ?? ''
-    const videoUrl = payload.video_output  ?? ''
-    const errorMsg = payload.failed_reason ?? ''
+    const jobId    = (payload.id           ?? '') as string
+    const status   = (payload.status       ?? '') as string
+    const videoUrl = (payload.video_output ?? '') as string
+    const errorMsg = (payload.failed_reason ?? '') as string
 
     logger.info(`[Webhook] Creatify event — status=${status}, id=${jobId}, video_output=${videoUrl || '[empty]'}`)
 

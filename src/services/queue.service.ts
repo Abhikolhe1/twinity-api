@@ -140,11 +140,17 @@ async function processJob(jobId: string): Promise<void> {
 
     const callbackUrl = env.serverUrl ? `${env.serverUrl}/api/webhooks/creatify` : undefined
 
+    const backgroundImageUrl = job.backgroundImageUrl
+      ? (await s3Service.presignIfS3Short(job.backgroundImageUrl, 7200)) ?? job.backgroundImageUrl
+      : undefined
+
     const render = await aiService.creatifyAurora({
-      audioUrl:    voiceAudioUrl,
-      imageUrl:    imageUrl!,
-      referenceId: job.referenceId,
+      audioUrl:           voiceAudioUrl,
+      imageUrl:           imageUrl!,
+      referenceId:        job.referenceId,
       callbackUrl,
+      creatifyPrompt:     job.sceneNotes || undefined,
+      backgroundImageUrl,
     })
 
     job.creatifyJobId = render.jobId

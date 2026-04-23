@@ -113,7 +113,9 @@ export async function previewVoice(req: AuthRequest, res: Response, next: NextFu
   try {
     const { celebrityId, script, voiceModel, voiceSpeed, voiceChangeEnabled, voiceChangeSourceUrl } = req.body
 
-    if (!celebrityId || !script?.trim()) throw new AppError('celebrityId and script are required', 400)
+    if (!celebrityId) throw new AppError('celebrityId is required', 400)
+    const isVoiceChange = voiceChangeEnabled && voiceChangeSourceUrl
+    if (!isVoiceChange && !script?.trim()) throw new AppError('script is required when not using voice change', 400)
 
     const celeb = await Celebrity.findById(celebrityId)
     if (!celeb || !celeb.isActive) throw new AppError('Celebrity not found or inactive', 404)
@@ -131,10 +133,10 @@ export async function previewVoice(req: AuthRequest, res: Response, next: NextFu
       const srcBuffer = Buffer.from(await srcRes.arrayBuffer())
       const result = await aiService.changeVoice({
         targetVoiceId: celeb.voiceModelId,
-        audioBuffer: srcBuffer,
+        audioBuffer:   srcBuffer,
         audioMimeType: srcRes.headers.get('content-type') || 'audio/mpeg',
-        celebSlug: celeb.slug,
-        model: voiceModel as ElevenLabsSTSModel | undefined,
+        celebSlug:     celeb.slug,
+        model:         voiceModel as ElevenLabsSTSModel | undefined,
         speed,
       })
       audioUrl = result.audioUrl
@@ -149,7 +151,7 @@ export async function previewVoice(req: AuthRequest, res: Response, next: NextFu
         celeb.slug,
         { model: safeTTSModel, speed },
       )
-      audioUrl = result.audioUrl
+      audioUrl     = result.audioUrl
       durationSecs = result.durationSecs
     }
 

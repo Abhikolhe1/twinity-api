@@ -3,8 +3,8 @@
  * API keys are loaded dynamically from the Settings DB (via settingsService).
  *
  * Pipeline:
- *   1. generateVoice()   — ElevenLabs TTS using celebrity's cloned voiceModelId → WAV
- *   2. creatifyAurora()  — Creatify Aurora: celebrity image + audio → lip-synced video (async)
+ *   1. generateVoice()   — ElevenLabs TTS using celebrity's cloned voiceModelId → MP3
+ *   2. creatifyAurora()  — Creatify Aurora: celebrity image + MP3 → lip-synced video (async)
  *
  * All methods fall back to stubs when credentials are not configured.
  */
@@ -15,6 +15,7 @@ import { s3Service } from './s3.service'
 
 export interface VoiceCloneResult   { jobId: string; audioUrl: string; durationSecs: number }
 export interface VoiceCloneIdResult { voiceId: string }
+export interface ChangeVoiceResult  { jobId: string; audioUrl: string }
 
 export type ElevenLabsTTSModel =
   | 'eleven_v3'
@@ -37,8 +38,6 @@ export const ELEVENLABS_STS_MODELS: ElevenLabsSTSModel[] = [
   'eleven_multilingual_sts_v2',
   'eleven_english_sts_v2',
 ]
-
-export interface ChangeVoiceResult { jobId: string; audioUrl: string }
 
 // ─── ElevenLabs ───────────────────────────────────────────────────────────────
 const ELEVENLABS_BASE = 'https://api.elevenlabs.io/v1'
@@ -89,12 +88,12 @@ const OPENAI_BASE = 'https://api.openai.com'
 // Arabic (0600–06FF) > 30 % of non-whitespace chars → "ar", else → "en".
 // Extend the map below to support additional scripts as needed.
 const SCRIPT_PATTERNS: Array<{ re: RegExp; code: string }> = [
-  { re: /[\u0600-\u06FF]/g, code: 'ar' },  // Arabic
-  { re: /[\u0400-\u04FF]/g, code: 'ru' },  // Cyrillic
-  { re: /[\u4E00-\u9FFF]/g, code: 'zh' },  // CJK (Chinese)
-  { re: /[\u3040-\u30FF]/g, code: 'ja' },  // Hiragana / Katakana
-  { re: /[\uAC00-\uD7AF]/g, code: 'ko' },  // Korean Hangul
-  { re: /[\u0900-\u097F]/g, code: 'hi' },  // Devanagari (Hindi)
+  { re: /[؀-ۿ]/g, code: 'ar' },  // Arabic
+  { re: /[Ѐ-ӿ]/g, code: 'ru' },  // Cyrillic
+  { re: /[一-鿿]/g, code: 'zh' },  // CJK (Chinese)
+  { re: /[぀-ヿ]/g, code: 'ja' },  // Hiragana / Katakana
+  { re: /[가-힯]/g, code: 'ko' },  // Korean Hangul
+  { re: /[ऀ-ॿ]/g, code: 'hi' },  // Devanagari (Hindi)
 ]
 
 function detectLanguage(text: string): string {
@@ -157,7 +156,6 @@ export const aiService = {
     )
     if (!res.ok) {
       const errText = await res.text()
-      logger.error(`[AI] ElevenLabs TTS failed (${res.status}): ${errText}`)
       throw new Error(`ElevenLabs failed (${res.status}): ${errText}`)
     }
 
@@ -318,7 +316,8 @@ export const aiService = {
 
   /**
    * Creatify Aurora — generate a lip-synced avatar video from a celebrity image + audio.
-   * Completion delivered via POST {SERVER_URL}/api/webhooks/creatify (or polled every 30s).
+   * Single step: replaces both Higgsfield (video gen) and Sync.so (lip-sync).
+   * Completion delivered via POST {SERVER_URL}/api/webhooks/creatify (or polled).
    *
    * Auth: X-API-ID + X-API-KEY headers
    * POST https://api.creatify.ai/api/aurora/
@@ -328,8 +327,9 @@ export const aiService = {
     imageUrl: string
     referenceId: string
     callbackUrl?: string
+    creatifyPrompt?: string
+    backgroundImageUrl?: string
   }): Promise<CreatifyResult> {
-    logger.info(`[AI] Creatify Aurora: refId=${params.referenceId}`)
     const { creatifyApiId, creatifyApiKey } = await settingsService.get()
 
     if (!creatifyApiId || !creatifyApiKey) {
@@ -340,34 +340,41 @@ export const aiService = {
     if (!params.imageUrl) throw new Error('Creatify Aurora: imageUrl is empty — upload a photo for this celebrity in the admin panel')
     if (!params.audioUrl) throw new Error('Creatify Aurora: audioUrl is empty — ElevenLabs audio URL not available')
 
-    const body: Record<string, unknown> = {
-      image:         params.imageUrl,
-      audio:         params.audioUrl,
-      model_version: 'aurora_v1',
-    }
-    if (params.callbackUrl) body.webhook_url = params.callbackUrl
+    const textPrompt = params.creatifyPrompt?.trim() ?? ''
 
-    logger.info(`[AI] Creatify Aurora — image: ${params.imageUrl.slice(0, 80)}`)
-    logger.info(`[AI] Creatify Aurora — audio: ${params.audioUrl.slice(0, 80)}`)
-    logger.info(`[AI] Creatify Aurora — webhook: ${params.callbackUrl ?? '[none]'}`)
+    logger.info(`[AI] Creatify Background Image: ${params.backgroundImageUrl}`)
 
-    const res = await fetch(`${CREATIFY_BASE}/api/aurora/`, {
+    return fetch(`${CREATIFY_BASE}/api/aurora/`, {
       method: 'POST',
       headers: {
         'X-API-ID':     creatifyApiId,
         'X-API-KEY':    creatifyApiKey,
         'Content-Type': 'application/json',
+        'Accept':       '*/*',
+        'User-Agent':   'PostmanRuntime/7.53.0',
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        audio:                 params.audioUrl,
+        image:                 params.backgroundImageUrl ?? params.imageUrl,
+        name:                  params.referenceId,
+        text_prompt:           textPrompt,
+        prompt_guidance_scale: 1,
+        model_version:         'aurora_v1',
+        webhook_url:           params.callbackUrl,
+      }),
     })
-    if (!res.ok) {
-      const err = await res.text()
-      throw new Error(`Creatify Aurora failed (${res.status}): ${err}`)
-    }
-    const data = await res.json() as { id?: string; status?: string }
-    if (!data.id) throw new Error(`Creatify Aurora: no id in response: ${JSON.stringify(data)}`)
-    logger.info(`[AI] Creatify Aurora job submitted: id=${data.id}`)
-    return { jobId: data.id, status: 'submitted' }
+      .then(async res => {
+        const text = await res.text()
+        if (!text) throw new Error(`Creatify Aurora (${res.status}): empty response body`)
+        const data = JSON.parse(text) as { id?: string; status?: string }
+        if (!data.id) throw new Error(`Creatify Aurora: no id in response: ${text}`)
+        logger.info(`[AI] Creatify Aurora job submitted: id=${data.id}`)
+        return { jobId: data.id, status: 'submitted' as const }
+      })
+      .catch((err: unknown) => {
+        logger.error('[AI] Creatify Aurora error:', err)
+        throw err
+      })
   },
 
   /**
@@ -613,7 +620,7 @@ export const aiService = {
    * ElevenLabs Speech-to-Speech — convert an existing audio recording to a
    * celebrity's cloned voice while preserving timing, emotion and delivery.
    * The caller provides a raw audio buffer (any format ElevenLabs accepts:
-   * mp3, wav, m4a, ogg, flac, webm).  The output is a WAV file uploaded to S3.
+   * mp3, wav, m4a, ogg, flac, webm).  The output is an MP3 file uploaded to S3.
    */
   async changeVoice(params: {
     targetVoiceId: string
