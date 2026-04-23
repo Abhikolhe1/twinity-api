@@ -361,9 +361,16 @@ export const aiService = {
       resolution:     '720p',
       duration:       'auto',
     }
-    if (params.callbackUrl) body.fal_webhook = params.callbackUrl
 
-    const res = await fetch(`${FAL_QUEUE_BASE}/${SEEDANCE_ENDPOINT}`, {
+    // Pass webhook as a query parameter — keeps it separate from model inputs
+    const submitUrl = params.callbackUrl
+      ? `${FAL_QUEUE_BASE}/${SEEDANCE_ENDPOINT}?fal_webhook=${encodeURIComponent(params.callbackUrl)}`
+      : `${FAL_QUEUE_BASE}/${SEEDANCE_ENDPOINT}`
+
+    logger.info(`[AI] Seedance request URL: ${submitUrl}`)
+    logger.info(`[AI] Seedance request body: ${JSON.stringify(body)}`)
+
+    const res = await fetch(submitUrl, {
       method: 'POST',
       headers: {
         'Authorization': `Key ${falApiKey}`,

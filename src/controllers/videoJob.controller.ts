@@ -34,7 +34,10 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
   try {
     const { celebrityId, productType, purpose, templateId, script, tone, duration, aspectRatio, resolution, channels,
             propImages, sceneNotes, backgroundImageUrl,
-            voiceModel, voiceSpeed, voiceChangeEnabled, voiceChangeSourceUrl } = req.body
+            voiceModel, voiceSpeed, voiceChangeEnabled, voiceChangeSourceUrl,
+            voiceAudioUrl } = req.body
+
+    if (!voiceAudioUrl) throw new AppError('voiceAudioUrl is required — complete a voice preview before submitting', 400)
 
     const celeb = await Celebrity.findById(celebrityId)
     if (!celeb || !celeb.isActive) throw new AppError('Celebrity not found or inactive', 404)
@@ -90,6 +93,7 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
       voiceSpeed:             voiceSpeed != null ? Number(voiceSpeed) : undefined,
       voiceChangeEnabled:     voiceChangeEnabled === true || voiceChangeEnabled === 'true' || undefined,
       voiceChangeSourceUrl:   voiceChangeSourceUrl   || undefined,
+      voiceAudioUrl:          voiceAudioUrl          || undefined,
     })
 
     // Increment celebrity order count

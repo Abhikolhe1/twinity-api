@@ -14,7 +14,7 @@
 import { logger } from '../config/logger'
 import { VideoJob, IVideoJob } from '../models/VideoJob'
 import { ProductType } from '../models/ProductType'
-import { aiService, ElevenLabsTTSModel, ElevenLabsSTSModel } from './ai.service'
+import { aiService } from './ai.service'
 import { s3Service } from './s3.service'
 import { settingsService } from './settings.service'
 import { env } from '../config/env'
@@ -174,62 +174,17 @@ async function processJob(jobId: string): Promise<void> {
   logger.info(`[Queue] Job ${job.referenceId} → in-progress`)
 
   try {
-    const settings = await settingsService.get()
+    // ── Step 1: Use pre-generated preview audio ──────────────────────────
+    // Voice audio is always generated during the wizard preview step.
+    // The Generate button is disabled until a take is selected, so voiceAudioUrl
+    // is guaranteed to be set on every job that reaches this point.
+    if (!job.voiceAudioUrl) throw new Error('No voice audio — complete a voice preview in the wizard before generating')
 
-    // ── Step 2: ElevenLabs — generate or change voice audio ─────────────
-    if (!celeb.voiceModelId) throw new Error(`Celebrity ${celeb.name} has no ElevenLabs voiceModelId`)
-    if (!settings.elevenLabsKey) throw new Error('ElevenLabs API key not configured')
+    // Re-presign the stored S3 URL to reset the 2-hour expiry window
+    const voiceAudioUrl = (await s3Service.presignIfS3Short(job.voiceAudioUrl, 7200)) ?? job.voiceAudioUrl
+    logger.info(`[Queue] Job ${job.referenceId} — using preview audio: ${voiceAudioUrl}`)
 
-    let voiceAudioUrl: string
-
-    if (job.voiceChangeEnabled && job.voiceChangeSourceUrl) {
-      // Speech-to-Speech: download source audio, re-voice it as the celebrity
-      logger.info(`[Queue] Job ${job.referenceId} — voice-change mode: fetching source audio`)
-      const srcRes = await fetch(job.voiceChangeSourceUrl)
-      if (!srcRes.ok) throw new Error(`Failed to download voice-change source audio (${srcRes.status})`)
-      const srcBuffer  = Buffer.from(await srcRes.arrayBuffer())
-      const srcMime    = srcRes.headers.get('content-type') || 'audio/mpeg'
-
-      const stsResult = await aiService.changeVoice({
-        targetVoiceId: celeb.voiceModelId,
-        audioBuffer:   srcBuffer,
-        audioMimeType: srcMime,
-        celebSlug:     celeb.slug,
-        model:         job.voiceModel as ElevenLabsSTSModel | undefined,
-        speed:         job.voiceSpeed,
-      })
-      job.voiceJobId    = stsResult.jobId
-      job.voiceAudioUrl = stsResult.audioUrl
-      voiceAudioUrl     = stsResult.audioUrl
-      logger.info(`[Queue] Job ${job.referenceId} — ElevenLabs STS complete: ${voiceAudioUrl}`)
-    } else {
-      // Standard TTS path
-      const MAX_WORDS = 40
-      const scriptWords = job.script.trim().split(/\s+/)
-      const truncatedScript = scriptWords.length > MAX_WORDS
-        ? scriptWords.slice(0, MAX_WORDS).join(' ')
-        : job.script
-      if (scriptWords.length > MAX_WORDS) {
-        logger.warn(`[Queue] Job ${job.referenceId} — script truncated from ${scriptWords.length} to ${MAX_WORDS} words`)
-      }
-
-      const ttsScript = await aiService.enhanceScriptForTTS(truncatedScript)
-      logger.info(`[Queue] Job ${job.referenceId} — prosody-enhanced script ready`)
-
-      job.processedScript = ttsScript
-      const voice = await aiService.generateVoice(
-        celeb.voiceModelId,
-        ttsScript,
-        celeb.slug,
-        { model: job.voiceModel as ElevenLabsTTSModel | undefined, speed: job.voiceSpeed },
-      )
-      job.voiceJobId    = voice.jobId
-      job.voiceAudioUrl = voice.audioUrl
-      voiceAudioUrl     = voice.audioUrl
-      logger.info(`[Queue] Job ${job.referenceId} — ElevenLabs TTS generated: ${voiceAudioUrl} (${voice.durationSecs}s)`)
-    }
-
-    // ── Step 3: Seedance 2.0 (image + audio → video) ────────────────────
+    // ── Step 2: Seedance 2.0 (image + audio → video) ────────────────────
     if (!celeb.thumbnailUrl) throw new Error(`Celebrity ${celeb.name} has no thumbnailUrl — upload a photo in the admin panel`)
 
     const imageUrl = await s3Service.presignIfS3Short(celeb.thumbnailUrl, 7200)
