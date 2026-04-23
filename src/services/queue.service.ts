@@ -2,121 +2,73 @@
  * Queue Service — processes video generation jobs.
  *
  * Pipeline:
- *   1. Generate voice audio via ElevenLabs TTS (using celebrity's voiceModelId)
- *   2. Submit Seedance 2.0 job via fal.ai (celebrity image + audio → video, async queue)
+ *   1. Use pre-generated voice audio (recorded during wizard preview step)
+ *   2. Submit Creatify Aurora job (celebrity image + audio → lip-synced video, async)
  *      — completion delivered via:
- *        a) fal.ai webhook → falWebhook()      (when SERVER_URL is set)
+ *        a) Creatify webhook → creatifyWebhook()   (when SERVER_URL is set)
  *        b) Status poll fallback — pollInProgressJobs() checks every 30s
- *   3. On completion: download fal.ai temp video → upload to S3 → store permanent URL
  *
- * Stub mode (no fal.ai key): job advances directly to review with audio preview URL.
+ * Stub mode (no Creatify keys): job advances directly to review with audio preview URL.
  */
 import { logger } from '../config/logger'
 import { VideoJob, IVideoJob } from '../models/VideoJob'
-import { ProductType } from '../models/ProductType'
 import { aiService } from './ai.service'
 import { s3Service } from './s3.service'
 import { settingsService } from './settings.service'
 import { env } from '../config/env'
 
-const POLL_INTERVAL_MS  = 30_000
-const FAL_QUEUE_BASE    = 'https://queue.fal.run'
-const SEEDANCE_ENDPOINT = 'bytedance/seedance-2.0/fast/reference-to-video'
+const POLL_INTERVAL_MS = 30_000
 
-interface FalStatusResponse {
+interface CreatifyStatusResponse {
+  id?: string
   status?: string
-  request_id?: string
-  error?: string
+  video_output?: string
+  failed_reason?: string
 }
 
-interface FalResultResponse {
-  video?: { url?: string; content_type?: string; file_name?: string; file_size?: number }
-  seed?: number
-}
-
-/**
- * Downloads the fal.ai temporary video URL and uploads it to S3.
- * Returns the permanent S3 URL, or the original URL if upload fails.
- */
-async function archiveVideoToS3(
-  falVideoUrl: string,
-  referenceId: string,
-  s3Bucket: string,
-): Promise<string> {
-  try {
-    logger.info(`[Queue] Downloading fal.ai video for ${referenceId}: ${falVideoUrl}`)
-    const res = await fetch(falVideoUrl)
-    if (!res.ok) throw new Error(`Download failed (${res.status})`)
-
-    const buffer = Buffer.from(await res.arrayBuffer())
-    const key    = `jobs/${referenceId}/final-video.mp4`
-    const upload = await s3Service.upload(s3Bucket, key, buffer, 'video/mp4')
-
-    if (upload.stub) {
-      logger.info(`[Queue] S3 stub — keeping fal.ai URL for ${referenceId}`)
-      return falVideoUrl
-    }
-
-    const permanentUrl = await s3Service.getPresignedUrl(s3Bucket, upload.key, 60 * 60 * 24 * 7)
-    logger.info(`[Queue] Video archived to S3 for ${referenceId}: ${permanentUrl}`)
-    return permanentUrl
-  } catch (err) {
-    logger.warn(`[Queue] S3 archive failed for ${referenceId} (using fal URL as fallback): ${String(err)}`)
-    return falVideoUrl
-  }
-}
-
-async function pollSeedanceJobs(jobs: IVideoJob[], falApiKey: string): Promise<void> {
+async function pollCreatifyJobs(
+  jobs: IVideoJob[],
+  apiId: string,
+  apiKey: string,
+): Promise<void> {
   for (const job of jobs) {
-    if (!job.seedanceRequestId) continue
+    if (!job.creatifyJobId) continue
     try {
-      const statusRes = await fetch(
-        `${FAL_QUEUE_BASE}/${SEEDANCE_ENDPOINT}/requests/${job.seedanceRequestId}/status`,
-        { headers: { 'Authorization': `Key ${falApiKey}` } },
-      )
-      if (!statusRes.ok) {
-        logger.warn(`[Queue] Seedance status poll ${statusRes.status} for job ${job.referenceId}`)
+      const res = await fetch(`https://api.creatify.ai/api/aurora/${job.creatifyJobId}/`, {
+        headers: {
+          'X-API-ID':  apiId,
+          'X-API-KEY': apiKey,
+        },
+      })
+      if (!res.ok) {
+        logger.warn(`[Queue] Creatify poll ${res.status} for job ${job.referenceId}`)
         continue
       }
-      const statusData = await statusRes.json() as FalStatusResponse
-      logger.info(`[Queue] Seedance poll ${job.referenceId}: status=${statusData.status}`)
+      const data = await res.json() as CreatifyStatusResponse
+      logger.info(`[Queue] Creatify poll ${job.referenceId}: status=${data.status}`)
 
-      if (statusData.status === 'COMPLETED') {
-        const resultRes = await fetch(
-          `${FAL_QUEUE_BASE}/${SEEDANCE_ENDPOINT}/requests/${job.seedanceRequestId}`,
-          { headers: { 'Authorization': `Key ${falApiKey}` } },
-        )
-        if (!resultRes.ok) {
-          logger.warn(`[Queue] Seedance result fetch failed (${resultRes.status}) for ${job.referenceId}`)
+      if (data.status === 'done') {
+        const videoUrl = data.video_output ?? ''
+        if (!videoUrl) {
+          logger.warn(`[Queue] Creatify poll: no video_output for ${job.referenceId}`)
           continue
         }
-        const result = await resultRes.json() as FalResultResponse
-        const falUrl = result.video?.url ?? ''
-        if (!falUrl) {
-          logger.warn(`[Queue] Seedance poll: no video.url for ${job.referenceId}`)
-          continue
-        }
-
-        const { s3Bucket } = await settingsService.get()
-        const videoUrl = await archiveVideoToS3(falUrl, job.referenceId, s3Bucket)
-
         job.finalVideoUrl  = videoUrl
         job.watermarkedUrl = videoUrl
         job.previewUrl     = videoUrl
         job.status         = 'review'
-        job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'Seedance 2.0 complete (poll)' })
+        job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'Creatify Aurora complete (poll)' })
         await job.save()
-        logger.info(`[Queue] Job ${job.referenceId} → review via Seedance poll`)
-
-      } else if (statusData.status === 'FAILED') {
+        logger.info(`[Queue] Job ${job.referenceId} → review via Creatify poll, url=${videoUrl}`)
+      } else if (data.status === 'failed') {
         job.status = 'failed'
-        job.errorMessage = statusData.error ?? 'Seedance 2.0 render failed'
+        job.errorMessage = data.failed_reason ?? 'Creatify Aurora render failed'
         job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
         await job.save()
-        logger.warn(`[Queue] Job ${job.referenceId} → failed via Seedance poll`)
+        logger.warn(`[Queue] Job ${job.referenceId} → failed via Creatify poll`)
       }
     } catch (err) {
-      logger.warn(`[Queue] Seedance poll error for job ${job.referenceId}:`, err)
+      logger.warn(`[Queue] Creatify poll error for job ${job.referenceId}:`, err)
     }
   }
 }
@@ -129,9 +81,9 @@ async function pollInProgressJobs(): Promise<void> {
     logger.info(`[Queue] Polling ${jobs.length} in-progress job(s)`)
     const settings = await settingsService.get()
 
-    if (settings.falApiKey) {
-      const seedanceJobs = jobs.filter(j => j.seedanceRequestId && !j.finalVideoUrl)
-      if (seedanceJobs.length > 0) await pollSeedanceJobs(seedanceJobs, settings.falApiKey)
+    const creatifyJobs = jobs.filter(j => j.creatifyJobId && !j.finalVideoUrl)
+    if (creatifyJobs.length > 0 && settings.creatifyApiId && settings.creatifyApiKey) {
+      await pollCreatifyJobs(creatifyJobs, settings.creatifyApiId, settings.creatifyApiKey)
     }
   } catch (err) {
     logger.error('[Queue] pollInProgressJobs error:', err)
@@ -175,52 +127,29 @@ async function processJob(jobId: string): Promise<void> {
 
   try {
     // ── Step 1: Use pre-generated preview audio ──────────────────────────
-    // Voice audio is always generated during the wizard preview step.
-    // The Generate button is disabled until a take is selected, so voiceAudioUrl
-    // is guaranteed to be set on every job that reaches this point.
     if (!job.voiceAudioUrl) throw new Error('No voice audio — complete a voice preview in the wizard before generating')
 
-    // Re-presign the stored S3 URL to reset the 2-hour expiry window
     const voiceAudioUrl = (await s3Service.presignIfS3Short(job.voiceAudioUrl, 7200)) ?? job.voiceAudioUrl
     logger.info(`[Queue] Job ${job.referenceId} — using preview audio: ${voiceAudioUrl}`)
 
-    // ── Step 2: Seedance 2.0 (image + audio → video) ────────────────────
+    // ── Step 2: Creatify Aurora (image + audio → lip-synced video) ──────
     if (!celeb.thumbnailUrl) throw new Error(`Celebrity ${celeb.name} has no thumbnailUrl — upload a photo in the admin panel`)
 
     const imageUrl = await s3Service.presignIfS3Short(celeb.thumbnailUrl, 7200)
     logger.info(`[Queue] Job ${job.referenceId} — imageUrl=${imageUrl}`)
 
-    const callbackUrl = env.serverUrl ? `${env.serverUrl}/api/webhooks/fal` : undefined
+    const callbackUrl = env.serverUrl ? `${env.serverUrl}/api/webhooks/creatify` : undefined
 
-    const productTypDoc = await ProductType.findOne({ slug: job.productType }).lean()
-
-    // Presign background image (2h) so fal.ai can download it
-    const backgroundImageUrl = job.backgroundImageUrl
-      ? (await s3Service.presignIfS3Short(job.backgroundImageUrl, 7200)) ?? job.backgroundImageUrl
-      : undefined
-
-    const videoPrompt = [productTypDoc?.videoPrompt, job.sceneNotes]
-      .filter(Boolean)
-      .join('. ')
-
-    // Resolve audio duration: prefer ElevenLabs-measured value, fall back to wizard selection
-    const DURATION_SECS: Record<string, number> = { '10s': 10, '15s': 15, '30s': 30, '60s': 60 }
-    const audioDuration = job.audioDuration ?? DURATION_SECS[job.duration]
-    logger.info(`[Queue] Job ${job.referenceId} — audioDuration=${audioDuration} (job.audioDuration=${job.audioDuration}, job.duration=${job.duration})`)
-
-    const render = await aiService.seedanceVideo({
-      imageUrl:           imageUrl!,
-      backgroundImageUrl,
-      referenceId:        job.referenceId,
+    const render = await aiService.creatifyAurora({
+      audioUrl:    voiceAudioUrl,
+      imageUrl:    imageUrl!,
+      referenceId: job.referenceId,
       callbackUrl,
-      videoPrompt:        videoPrompt || undefined,
-      audioDuration,
     })
 
-    job.seedanceRequestId = render.requestId
+    job.creatifyJobId = render.jobId
 
     if (render.status === 'stub') {
-      // Stub / no fal.ai key — advance directly to review with audio preview
       job.previewUrl     = voiceAudioUrl
       job.watermarkedUrl = voiceAudioUrl
       job.finalVideoUrl  = voiceAudioUrl
@@ -228,7 +157,7 @@ async function processJob(jobId: string): Promise<void> {
       job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'Stub render — ready for CS review' })
       logger.info(`[Queue] Job ${job.referenceId} → review (stub), audio preview: ${voiceAudioUrl}`)
     } else {
-      logger.info(`[Queue] Job ${job.referenceId} Seedance queued → awaiting webhook (request_id: ${render.requestId})`)
+      logger.info(`[Queue] Job ${job.referenceId} Creatify Aurora queued → awaiting webhook (id: ${render.jobId})`)
     }
 
     await job.save()
@@ -253,7 +182,7 @@ export const queueService = {
   },
 
   startPoller(): void {
-    logger.info(`[Queue] Starting Seedance status poller (interval: ${POLL_INTERVAL_MS / 1000}s)`)
+    logger.info(`[Queue] Starting Creatify status poller (interval: ${POLL_INTERVAL_MS / 1000}s)`)
     setInterval(pollInProgressJobs, POLL_INTERVAL_MS)
     pollInProgressJobs().catch(() => null)
   },

@@ -1,10 +1,10 @@
 /**
- * AI Service — integrates ElevenLabs (TTS voice) and Seedance 2.0 via fal.ai (video gen).
+ * AI Service — integrates ElevenLabs (TTS voice) and Creatify Aurora (lip-sync video).
  * API keys are loaded dynamically from the Settings DB (via settingsService).
  *
  * Pipeline:
  *   1. generateVoice()   — ElevenLabs TTS using celebrity's cloned voiceModelId → WAV
- *   2. seedanceVideo()   — fal.ai Seedance 2.0: celebrity image + audio → video (async queue)
+ *   2. creatifyAurora()  — Creatify Aurora: celebrity image + audio → lip-synced video (async)
  *
  * All methods fall back to stubs when credentials are not configured.
  */
@@ -76,11 +76,10 @@ async function generateVoicePreview(voiceId: string, language: string, apiKey: s
   }
 }
 
-// ─── fal.ai Queue API ─────────────────────────────────────────────────────────
-const FAL_QUEUE_BASE    = 'https://queue.fal.run'
-const SEEDANCE_ENDPOINT = 'bytedance/seedance-2.0/fast/reference-to-video'
+// ─── Creatify API ─────────────────────────────────────────────────────────────
+const CREATIFY_BASE = 'https://api.creatify.ai'
 
-export interface SeedanceResult { requestId: string; status: 'submitted' | 'stub' }
+export interface CreatifyResult { jobId: string; status: 'submitted' | 'stub' }
 
 // ─── OpenAI API ───────────────────────────────────────────────────────────────
 const OPENAI_BASE = 'https://api.openai.com'
@@ -318,73 +317,57 @@ export const aiService = {
   },
 
   /**
-   * Seedance 2.0 via fal.ai — generate a video from a celebrity reference image + audio.
-   * Submits to fal.ai queue; completion delivered via:
-   *   a) fal.ai webhook → POST {SERVER_URL}/api/webhooks/fal  (when SERVER_URL is set)
-   *   b) Status poll fallback — pollInProgressJobs() checks every 30s
+   * Creatify Aurora — generate a lip-synced avatar video from a celebrity image + audio.
+   * Completion delivered via POST {SERVER_URL}/api/webhooks/creatify (or polled every 30s).
    *
-   * Auth: Authorization: Key {FAL_KEY}
-   * POST https://queue.fal.run/bytedance/seedance-2.0/fast/reference-to-video
+   * Auth: X-API-ID + X-API-KEY headers
+   * POST https://api.creatify.ai/api/aurora/
    */
-  async seedanceVideo(params: {
+  async creatifyAurora(params: {
+    audioUrl: string
     imageUrl: string
-    backgroundImageUrl?: string   // AI-generated scene image; replaces thumbnailUrl when present
     referenceId: string
     callbackUrl?: string
-    videoPrompt?: string
-    audioDuration?: number        // audio length in seconds — Seedance matches video length to this
-  }): Promise<SeedanceResult> {
-    const { falApiKey } = await settingsService.get()
+  }): Promise<CreatifyResult> {
+    logger.info(`[AI] Creatify Aurora: refId=${params.referenceId}`)
+    const { creatifyApiId, creatifyApiKey } = await settingsService.get()
 
-    if (!falApiKey) {
-      logger.warn('[AI] fal.ai key not set — returning stub')
-      return { requestId: `stub-seedance-${Date.now()}`, status: 'stub' }
+    if (!creatifyApiId || !creatifyApiKey) {
+      logger.warn('[AI] Creatify API ID / key not set — returning stub')
+      return { jobId: `stub-creatify-${Date.now()}`, status: 'stub' }
     }
 
-    if (!params.imageUrl) throw new Error('Seedance: imageUrl is empty — upload a photo for this celebrity in the admin panel')
-
-    // Use the AI-generated background image when the customer selected one;
-    // fall back to the celebrity thumbnail otherwise.
-    const primaryImage = params.backgroundImageUrl ?? params.imageUrl
-    logger.info(`[AI] Seedance image: ${params.backgroundImageUrl ? 'AI background' : 'celebrity thumbnail'} → ${primaryImage}`)
-
-    const prompt = params.videoPrompt?.trim() || ''
-
-    logger.info(`[AI] Seedance submitting: referenceId=${params.referenceId}, prompt="${prompt}"`)
+    if (!params.imageUrl) throw new Error('Creatify Aurora: imageUrl is empty — upload a photo for this celebrity in the admin panel')
+    if (!params.audioUrl) throw new Error('Creatify Aurora: audioUrl is empty — ElevenLabs audio URL not available')
 
     const body: Record<string, unknown> = {
-      prompt,
-      image_urls:     [primaryImage],
-      generate_audio: false,
-      resolution:     '720p',
-      duration:       params.audioDuration ? String(Math.ceil(params.audioDuration)) : 'auto',
+      image:         params.imageUrl,
+      audio:         params.audioUrl,
+      model_version: 'aurora_v1',
     }
+    if (params.callbackUrl) body.webhook_url = params.callbackUrl
 
-    // Pass webhook as a query parameter — keeps it separate from model inputs
-    const submitUrl = params.callbackUrl
-      ? `${FAL_QUEUE_BASE}/${SEEDANCE_ENDPOINT}?fal_webhook=${encodeURIComponent(params.callbackUrl)}`
-      : `${FAL_QUEUE_BASE}/${SEEDANCE_ENDPOINT}`
+    logger.info(`[AI] Creatify Aurora — image: ${params.imageUrl.slice(0, 80)}`)
+    logger.info(`[AI] Creatify Aurora — audio: ${params.audioUrl.slice(0, 80)}`)
+    logger.info(`[AI] Creatify Aurora — webhook: ${params.callbackUrl ?? '[none]'}`)
 
-    logger.info(`[AI] Seedance request URL: ${submitUrl}`)
-    logger.info(`[AI] Seedance request body: ${JSON.stringify(body)}`)
-
-    const res = await fetch(submitUrl, {
+    const res = await fetch(`${CREATIFY_BASE}/api/aurora/`, {
       method: 'POST',
       headers: {
-        'Authorization': `Key ${falApiKey}`,
-        'Content-Type':  'application/json',
+        'X-API-ID':     creatifyApiId,
+        'X-API-KEY':    creatifyApiKey,
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
     })
-
-    const text = await res.text()
-    if (!res.ok) throw new Error(`Seedance submit failed (${res.status}): ${text}`)
-
-    const data = JSON.parse(text) as { request_id?: string }
-    if (!data.request_id) throw new Error(`Seedance: no request_id in response: ${text}`)
-
-    logger.info(`[AI] Seedance job submitted: request_id=${data.request_id}`)
-    return { requestId: data.request_id, status: 'submitted' }
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`Creatify Aurora failed (${res.status}): ${err}`)
+    }
+    const data = await res.json() as { id?: string; status?: string }
+    if (!data.id) throw new Error(`Creatify Aurora: no id in response: ${JSON.stringify(data)}`)
+    logger.info(`[AI] Creatify Aurora job submitted: id=${data.id}`)
+    return { jobId: data.id, status: 'submitted' }
   },
 
   /**

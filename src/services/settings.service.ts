@@ -10,7 +10,8 @@ const CACHE_TTL_MS = 30_000
 
 interface CachedSettings {
   elevenLabsKey: string
-  falApiKey: string
+  creatifyApiId: string
+  creatifyApiKey: string
   openaiKey: string
   geminiApiKey: string
   watermarkText: string
@@ -38,9 +39,10 @@ async function load(): Promise<CachedSettings> {
     const doc = await Settings.findOne({ key: 'global' })
     const d = (doc?.toObject() ?? {}) as Record<string, string>
     _cache = {
-      elevenLabsKey: d.elevenLabsKey || env.externalApis.elevenLabs || '',
-      falApiKey:     d.falApiKey     || env.externalApis.falApiKey  || '',
-      openaiKey:     d.openaiKey     || env.externalApis.openai     || '',
+      elevenLabsKey:  d.elevenLabsKey  || env.externalApis.elevenLabs     || '',
+      creatifyApiId:  d.creatifyApiId  || env.externalApis.creatifyApiId  || '',
+      creatifyApiKey: d.creatifyApiKey || env.externalApis.creatifyApiKey || '',
+      openaiKey:      d.openaiKey      || env.externalApis.openai         || '',
       geminiApiKey:   d.geminiApiKey   || '',
       watermarkText:     d.watermarkText     || 'twinity.ai · PREVIEW',
       watermarkOpacity:  d.watermarkOpacity  || '0.35',
@@ -59,9 +61,10 @@ async function load(): Promise<CachedSettings> {
   } catch (err) {
     logger.error('[Settings] Failed to load from DB, using env fallback:', err)
     _cache = {
-      elevenLabsKey: env.externalApis.elevenLabs || '',
-      falApiKey:     env.externalApis.falApiKey  || '',
-      openaiKey:     env.externalApis.openai     || '',
+      elevenLabsKey:  env.externalApis.elevenLabs     || '',
+      creatifyApiId:  env.externalApis.creatifyApiId  || '',
+      creatifyApiKey: env.externalApis.creatifyApiKey || '',
+      openaiKey:      env.externalApis.openai         || '',
       geminiApiKey:   '',
       watermarkText:     'twinity.ai · PREVIEW',
       watermarkOpacity:  '0.35',

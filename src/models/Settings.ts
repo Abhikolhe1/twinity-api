@@ -6,7 +6,8 @@ export interface ISettings extends Document {
   supportEmail: string
   adminEmail: string
   elevenLabsKey: string
-  falApiKey: string
+  creatifyApiId: string
+  creatifyApiKey: string
   openaiKey: string
   geminiApiKey: string
   watermarkText: string
@@ -28,9 +29,10 @@ const SettingsSchema = new Schema<ISettings>(
     platformName:      { type: String, default: 'Twinity' },
     supportEmail:      { type: String, default: 'support@twinity.ai' },
     adminEmail:        { type: String, default: 'admin@twinity.ai' },
-    elevenLabsKey: { type: String, default: '' },
-    falApiKey:     { type: String, default: '' },
-    openaiKey:     { type: String, default: '' },
+    elevenLabsKey:  { type: String, default: '' },
+    creatifyApiId:  { type: String, default: '' },
+    creatifyApiKey: { type: String, default: '' },
+    openaiKey:      { type: String, default: '' },
     geminiApiKey:   { type: String, default: '' },
     watermarkText:     { type: String, default: 'twinity.ai · PREVIEW' },
     watermarkOpacity:  { type: String, default: '0.35' },
@@ -59,9 +61,10 @@ function maskKey(val: string): string {
 
 SettingsSchema.methods.toPublicJSON = function () {
   const obj = this.toObject()
-  if (obj.elevenLabsKey) obj.elevenLabsKey = maskKey(obj.elevenLabsKey)
-  if (obj.falApiKey)     obj.falApiKey     = maskKey(obj.falApiKey)
-  if (obj.openaiKey)     obj.openaiKey     = maskKey(obj.openaiKey)
+  if (obj.elevenLabsKey)  obj.elevenLabsKey  = maskKey(obj.elevenLabsKey)
+  if (obj.creatifyApiId)  obj.creatifyApiId  = maskKey(obj.creatifyApiId)
+  if (obj.creatifyApiKey) obj.creatifyApiKey = maskKey(obj.creatifyApiKey)
+  if (obj.openaiKey)      obj.openaiKey      = maskKey(obj.openaiKey)
   if (obj.geminiApiKey)   obj.geminiApiKey   = maskKey(obj.geminiApiKey)
   if (obj.awsSecretAccessKey) obj.awsSecretAccessKey = maskKey(obj.awsSecretAccessKey)
   return obj

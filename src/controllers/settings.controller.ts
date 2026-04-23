@@ -18,7 +18,8 @@ function maskKey(val: string): string {
 
 const SECRET_FIELDS = [
   'elevenLabsKey',
-  'falApiKey',
+  'creatifyApiId',
+  'creatifyApiKey',
   'openaiKey',
   'geminiApiKey',
   'awsSecretAccessKey',

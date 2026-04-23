@@ -1,99 +1,67 @@
 /**
- * Webhook Controller — handles inbound callbacks from fal.ai (Seedance 2.0).
+ * Webhook Controller — handles inbound callbacks from Creatify Aurora.
  *
- * fal.ai → /api/webhooks/fal
- *   - status "OK"    — download temp video → archive to S3 → advance job to 'review'
- *   - status "ERROR" — mark job failed
+ * Creatify → /api/webhooks/creatify
+ *   - status "done"   — set finalVideoUrl, advance job to 'review'
+ *   - status "failed" — mark job failed, notify customer
  *
- * Set SERVER_URL env var so the webhook URL is sent with each Seedance job submission.
+ * Register the URL in the Creatify dashboard (webhook_url param on each request).
  */
 import { Request, Response } from 'express'
 import { VideoJob } from '../models/VideoJob'
 import { User } from '../models/User'
 import { settingsService } from '../services/settings.service'
-import { s3Service } from '../services/s3.service'
 import { emailService } from '../services/email.service'
 import { logger } from '../config/logger'
 
-interface FalWebhookPayload {
-  request_id?: string
-  status?: string      // "OK" = completed, "ERROR" = failed
-  payload?: {
-    video?: { url?: string; content_type?: string; file_name?: string; file_size?: number }
-  }
-  error?: string | null
+interface CreatifyWebhookPayload {
+  id?: string
+  status?: string
+  video_output?: string
+  failed_reason?: string
 }
 
-async function archiveVideoToS3(
-  falVideoUrl: string,
-  referenceId: string,
-  s3Bucket: string,
-): Promise<string> {
+export async function creatifyWebhook(req: Request, res: Response): Promise<void> {
   try {
-    logger.info(`[Webhook] Downloading fal.ai video for ${referenceId}: ${falVideoUrl}`)
-    const res = await fetch(falVideoUrl)
-    if (!res.ok) throw new Error(`Download failed (${res.status})`)
+    const payload = req.body as CreatifyWebhookPayload
+    logger.info(`[Webhook] Creatify raw payload: ${JSON.stringify(payload)}`)
 
-    const buffer = Buffer.from(await res.arrayBuffer())
-    const key    = `jobs/${referenceId}/final-video.mp4`
-    const upload = await s3Service.upload(s3Bucket, key, buffer, 'video/mp4')
+    const jobId    = payload.id            ?? ''
+    const status   = payload.status        ?? ''
+    const videoUrl = payload.video_output  ?? ''
+    const errorMsg = payload.failed_reason ?? ''
 
-    if (upload.stub) {
-      logger.info(`[Webhook] S3 stub — keeping fal.ai URL for ${referenceId}`)
-      return falVideoUrl
-    }
+    logger.info(`[Webhook] Creatify event — status=${status}, id=${jobId}, video_output=${videoUrl || '[empty]'}`)
 
-    const permanentUrl = await s3Service.getPresignedUrl(s3Bucket, upload.key, 60 * 60 * 24 * 7)
-    logger.info(`[Webhook] Video archived to S3 for ${referenceId}: ${permanentUrl}`)
-    return permanentUrl
-  } catch (err) {
-    logger.warn(`[Webhook] S3 archive failed for ${referenceId} (using fal URL as fallback): ${String(err)}`)
-    return falVideoUrl
-  }
-}
+    const outcome = status === 'done' ? 'success' : status === 'failed' ? 'failure' : null
 
-export async function falWebhook(req: Request, res: Response): Promise<void> {
-  try {
-    const payload = req.body as FalWebhookPayload
-    logger.info(`[Webhook] fal.ai raw payload: ${JSON.stringify(payload)}`)
-
-    const requestId = payload.request_id ?? ''
-    const status    = payload.status ?? ''
-    const falUrl    = payload.payload?.video?.url ?? ''
-    const errorMsg  = payload.error ?? ''
-
-    logger.info(`[Webhook] fal.ai event — status=${status}, request_id=${requestId}`)
-
-    if (status !== 'OK' && status !== 'ERROR') {
-      logger.info(`[Webhook] fal.ai: unhandled status "${status}" — ignoring`)
+    if (!outcome) {
+      logger.info(`[Webhook] Creatify unhandled status: ${status}`)
       res.json({ success: true })
       return
     }
 
-    const job = await VideoJob.findOne({ seedanceRequestId: requestId })
+    const job = await VideoJob.findOne({ creatifyJobId: jobId })
     if (!job) {
-      logger.warn(`[Webhook] fal.ai: no job found for request_id=${requestId}`)
+      logger.warn(`[Webhook] Creatify: no job found for id=${jobId}`)
       res.status(404).json({ success: false, message: 'Job not found' })
       return
     }
 
-    if (status === 'OK') {
-      if (!falUrl) {
-        logger.error(`[Webhook] fal.ai: no video.url for job=${job.referenceId} — cannot proceed`)
+    if (outcome === 'success') {
+      if (!videoUrl) {
+        logger.error(`[Webhook] Creatify: no video_output for job=${job.referenceId} — cannot proceed`)
         res.json({ success: true })
         return
       }
-
-      const { s3Bucket } = await settingsService.get()
-      const videoUrl = await archiveVideoToS3(falUrl, job.referenceId, s3Bucket)
 
       job.finalVideoUrl  = videoUrl
       job.watermarkedUrl = videoUrl
       job.previewUrl     = videoUrl
       job.status         = 'review'
-      job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'Seedance 2.0 complete — pending CS approval' })
+      job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'Creatify Aurora complete — pending CS approval' })
       await job.save()
-      logger.info(`[Webhook] Seedance complete: job=${job.referenceId}, url=${videoUrl}`)
+      logger.info(`[Webhook] Creatify complete: job=${job.referenceId}, url=${videoUrl}`)
 
       const { adminEmail } = await settingsService.get()
       if (adminEmail) {
@@ -101,10 +69,10 @@ export async function falWebhook(req: Request, res: Response): Promise<void> {
       }
     } else {
       job.status       = 'failed'
-      job.errorMessage = String(errorMsg || 'Seedance 2.0 render failed')
+      job.errorMessage = errorMsg || 'Creatify Aurora render failed'
       job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
       await job.save()
-      logger.warn(`[Webhook] Seedance failed: job=${job.referenceId}, error=${errorMsg}`)
+      logger.warn(`[Webhook] Creatify failed: job=${job.referenceId}, error=${errorMsg}`)
 
       User.findById(job.userId).then(user => {
         if (user) emailService.sendJobStatusUpdate(user.email, user.name, 'failed', job.referenceId).catch(() => null)
@@ -113,7 +81,7 @@ export async function falWebhook(req: Request, res: Response): Promise<void> {
 
     res.json({ success: true })
   } catch (err: any) {
-    logger.error('[Webhook] fal.ai webhook error:', err)
+    logger.error('[Webhook] Creatify webhook error:', err)
     res.status(200).json({ success: false, message: 'Internal error — logged' })
   }
 }
