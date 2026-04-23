@@ -543,18 +543,18 @@ export async function generateImage(req: AuthRequest, res: Response, next: NextF
   }
 }
 
-// Authenticated — upload a user asset (prop/reference image) to S3
+// Authenticated — upload a user asset (image or audio) to S3
 export async function uploadAsset(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { dataUrl } = req.body as { dataUrl?: string }
     if (!dataUrl?.trim()) throw new AppError('dataUrl is required', 400)
 
-    const match = dataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/)
-    if (!match) throw new AppError('dataUrl must be a valid base64 image data URL', 400)
+    const match = dataUrl.match(/^data:((image|audio)\/[^;]+);base64,(.+)$/)
+    if (!match) throw new AppError('dataUrl must be a valid base64 image or audio data URL', 400)
 
     const mimeType = match[1]
-    const ext      = mimeType.split('/')[1] || 'png'
-    const buffer   = Buffer.from(match[2], 'base64')
+    const ext      = mimeType.split('/')[1]?.split(';')[0] || 'bin'
+    const buffer   = Buffer.from(match[3], 'base64')
     const userId   = req.userId ?? 'anon'
     const key      = `user-assets/${userId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
 
