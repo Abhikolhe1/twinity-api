@@ -1,14 +1,11 @@
 /**
- * Webhook Controller — handles inbound callbacks from fal.ai.
+ * Webhook Controller — handles inbound callbacks from fal.ai (Seedance 2.0).
  *
- * Two-step pipeline:
- *   Step 1 — Seedance 2.0: celebrity image → base video
- *   Step 2 — SyncLabs:     base video + ElevenLabs audio → lip-synced final video
+ * fal.ai → /api/webhooks/fal
+ *   - status "OK"    — download temp video → archive to S3 → advance job to 'review'
+ *   - status "ERROR" — mark job failed
  *
- * Both steps use the same POST /api/webhooks/fal endpoint.
- * Jobs are looked up by seedanceRequestId OR syncLabsRequestId to identify the step.
- *
- * fal.ai webhook payload: { status: "OK"|"ERROR", request_id, payload: { video: { url } } }
+ * Set SERVER_URL env var so the webhook URL is sent with each Seedance job submission.
  */
 import { Request, Response } from 'express'
 import { VideoJob } from '../models/VideoJob'
@@ -16,8 +13,6 @@ import { User } from '../models/User'
 import { settingsService } from '../services/settings.service'
 import { s3Service } from '../services/s3.service'
 import { emailService } from '../services/email.service'
-import { aiService } from '../services/ai.service'
-import { env } from '../config/env'
 import { logger } from '../config/logger'
 
 interface FalWebhookPayload {
@@ -75,22 +70,12 @@ export async function falWebhook(req: Request, res: Response): Promise<void> {
       return
     }
 
-    // Look up by seedanceRequestId OR syncLabsRequestId
-    const job = await VideoJob.findOne({
-      $or: [
-        { seedanceRequestId: requestId },
-        { syncLabsRequestId: requestId },
-      ],
-    })
-
+    const job = await VideoJob.findOne({ seedanceRequestId: requestId })
     if (!job) {
       logger.warn(`[Webhook] fal.ai: no job found for request_id=${requestId}`)
       res.status(404).json({ success: false, message: 'Job not found' })
       return
     }
-
-    const isSeedanceDone  = job.seedanceRequestId === requestId
-    const isSyncLabsDone  = job.syncLabsRequestId === requestId
 
     if (status === 'OK') {
       if (!falUrl) {
@@ -99,57 +84,27 @@ export async function falWebhook(req: Request, res: Response): Promise<void> {
         return
       }
 
-      if (isSeedanceDone) {
-        // ── Step 1 complete: submit base video to SyncLabs for lip sync ──────
-        logger.info(`[Webhook] Seedance complete for ${job.referenceId} — submitting to SyncLabs`)
+      const { s3Bucket } = await settingsService.get()
+      const videoUrl = await archiveVideoToS3(falUrl, job.referenceId, s3Bucket)
 
-        if (!job.voiceAudioUrl) {
-          logger.error(`[Webhook] No voiceAudioUrl on job ${job.referenceId} — cannot submit to SyncLabs`)
-          res.json({ success: true })
-          return
-        }
+      job.finalVideoUrl  = videoUrl
+      job.watermarkedUrl = videoUrl
+      job.previewUrl     = videoUrl
+      job.status         = 'review'
+      job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'Seedance 2.0 complete — pending CS approval' })
+      await job.save()
+      logger.info(`[Webhook] Seedance complete: job=${job.referenceId}, url=${videoUrl}`)
 
-        const audioUrl     = (await s3Service.presignIfS3Short(job.voiceAudioUrl, 7200)) ?? job.voiceAudioUrl
-        const callbackUrl  = env.serverUrl ? `${env.serverUrl}/api/webhooks/fal` : undefined
-
-        const syncResult = await aiService.syncLabsLipsync({
-          videoUrl:     falUrl,
-          audioUrl,
-          referenceId:  job.referenceId,
-          callbackUrl,
-        })
-
-        job.syncLabsRequestId = syncResult.requestId
-        await job.save()
-        logger.info(`[Webhook] SyncLabs queued for ${job.referenceId}: request_id=${syncResult.requestId}`)
-
-      } else if (isSyncLabsDone) {
-        // ── Step 2 complete: archive final video, advance to review ───────────
-        const { s3Bucket } = await settingsService.get()
-        const videoUrl = await archiveVideoToS3(falUrl, job.referenceId, s3Bucket)
-
-        job.finalVideoUrl  = videoUrl
-        job.watermarkedUrl = videoUrl
-        job.previewUrl     = videoUrl
-        job.status         = 'review'
-        job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'SyncLabs lipsync complete — pending CS approval' })
-        await job.save()
-        logger.info(`[Webhook] SyncLabs complete: job=${job.referenceId}, url=${videoUrl}`)
-
-        const { adminEmail } = await settingsService.get()
-        if (adminEmail) {
-          emailService.sendNewLeadNotification({ email: adminEmail } as any).catch(() => null)
-        }
+      const { adminEmail } = await settingsService.get()
+      if (adminEmail) {
+        emailService.sendNewLeadNotification({ email: adminEmail } as any).catch(() => null)
       }
-
     } else {
-      // ERROR from either step
-      const step = isSeedanceDone ? 'Seedance' : 'SyncLabs'
       job.status       = 'failed'
-      job.errorMessage = String(errorMsg || `${step} render failed`)
+      job.errorMessage = String(errorMsg || 'Seedance 2.0 render failed')
       job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
       await job.save()
-      logger.warn(`[Webhook] ${step} failed: job=${job.referenceId}, error=${errorMsg}`)
+      logger.warn(`[Webhook] Seedance failed: job=${job.referenceId}, error=${errorMsg}`)
 
       User.findById(job.userId).then(user => {
         if (user) emailService.sendJobStatusUpdate(user.email, user.name, 'failed', job.referenceId).catch(() => null)

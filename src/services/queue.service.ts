@@ -22,7 +22,6 @@ import { env } from '../config/env'
 const POLL_INTERVAL_MS  = 30_000
 const FAL_QUEUE_BASE    = 'https://queue.fal.run'
 const SEEDANCE_ENDPOINT = 'bytedance/seedance-2.0/fast/reference-to-video'
-const SYNCLABS_ENDPOINT = 'fal-ai/sync-lipsync'
 
 interface FalStatusResponse {
   status?: string
@@ -122,61 +121,6 @@ async function pollSeedanceJobs(jobs: IVideoJob[], falApiKey: string): Promise<v
   }
 }
 
-async function pollSyncLabsJobs(jobs: IVideoJob[], falApiKey: string): Promise<void> {
-  for (const job of jobs) {
-    if (!job.syncLabsRequestId) continue
-    try {
-      const statusRes = await fetch(
-        `${FAL_QUEUE_BASE}/${SYNCLABS_ENDPOINT}/requests/${job.syncLabsRequestId}/status`,
-        { headers: { 'Authorization': `Key ${falApiKey}` } },
-      )
-      if (!statusRes.ok) {
-        logger.warn(`[Queue] SyncLabs status poll ${statusRes.status} for job ${job.referenceId}`)
-        continue
-      }
-      const statusData = await statusRes.json() as FalStatusResponse
-      logger.info(`[Queue] SyncLabs poll ${job.referenceId}: status=${statusData.status}`)
-
-      if (statusData.status === 'COMPLETED') {
-        const resultRes = await fetch(
-          `${FAL_QUEUE_BASE}/${SYNCLABS_ENDPOINT}/requests/${job.syncLabsRequestId}`,
-          { headers: { 'Authorization': `Key ${falApiKey}` } },
-        )
-        if (!resultRes.ok) {
-          logger.warn(`[Queue] SyncLabs result fetch failed (${resultRes.status}) for ${job.referenceId}`)
-          continue
-        }
-        const result = await resultRes.json() as FalResultResponse
-        const falUrl = result.video?.url ?? ''
-        if (!falUrl) {
-          logger.warn(`[Queue] SyncLabs poll: no video.url for ${job.referenceId}`)
-          continue
-        }
-
-        const { s3Bucket } = await settingsService.get()
-        const videoUrl = await archiveVideoToS3(falUrl, job.referenceId, s3Bucket)
-
-        job.finalVideoUrl  = videoUrl
-        job.watermarkedUrl = videoUrl
-        job.previewUrl     = videoUrl
-        job.status         = 'review'
-        job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'SyncLabs lipsync complete (poll)' })
-        await job.save()
-        logger.info(`[Queue] Job ${job.referenceId} → review via SyncLabs poll`)
-
-      } else if (statusData.status === 'FAILED') {
-        job.status = 'failed'
-        job.errorMessage = statusData.error ?? 'SyncLabs lipsync failed'
-        job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
-        await job.save()
-        logger.warn(`[Queue] Job ${job.referenceId} → failed via SyncLabs poll`)
-      }
-    } catch (err) {
-      logger.warn(`[Queue] SyncLabs poll error for job ${job.referenceId}:`, err)
-    }
-  }
-}
-
 async function pollInProgressJobs(): Promise<void> {
   try {
     const jobs = await VideoJob.find({ status: 'in-progress' })
@@ -186,13 +130,8 @@ async function pollInProgressJobs(): Promise<void> {
     const settings = await settingsService.get()
 
     if (settings.falApiKey) {
-      // Step 1: Seedance jobs waiting for base video (no syncLabsRequestId yet)
-      const seedanceJobs = jobs.filter(j => j.seedanceRequestId && !j.syncLabsRequestId && !j.finalVideoUrl)
+      const seedanceJobs = jobs.filter(j => j.seedanceRequestId && !j.finalVideoUrl)
       if (seedanceJobs.length > 0) await pollSeedanceJobs(seedanceJobs, settings.falApiKey)
-
-      // Step 2: SyncLabs jobs waiting for lip-synced final video
-      const syncLabsJobs = jobs.filter(j => j.syncLabsRequestId && !j.finalVideoUrl)
-      if (syncLabsJobs.length > 0) await pollSyncLabsJobs(syncLabsJobs, settings.falApiKey)
     }
   } catch (err) {
     logger.error('[Queue] pollInProgressJobs error:', err)
@@ -264,13 +203,18 @@ async function processJob(jobId: string): Promise<void> {
       .filter(Boolean)
       .join('. ')
 
+    // Resolve audio duration: prefer ElevenLabs-measured value, fall back to wizard selection
+    const DURATION_SECS: Record<string, number> = { '10s': 10, '15s': 15, '30s': 30, '60s': 60 }
+    const audioDuration = job.audioDuration ?? DURATION_SECS[job.duration]
+    logger.info(`[Queue] Job ${job.referenceId} — audioDuration=${audioDuration} (job.audioDuration=${job.audioDuration}, job.duration=${job.duration})`)
+
     const render = await aiService.seedanceVideo({
       imageUrl:           imageUrl!,
       backgroundImageUrl,
       referenceId:        job.referenceId,
       callbackUrl,
       videoPrompt:        videoPrompt || undefined,
-      audioDuration:      job.audioDuration,
+      audioDuration,
     })
 
     job.seedanceRequestId = render.requestId

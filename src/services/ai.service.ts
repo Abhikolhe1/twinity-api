@@ -77,12 +77,10 @@ async function generateVoicePreview(voiceId: string, language: string, apiKey: s
 }
 
 // ─── fal.ai Queue API ─────────────────────────────────────────────────────────
-const FAL_QUEUE_BASE      = 'https://queue.fal.run'
-const SEEDANCE_ENDPOINT   = 'bytedance/seedance-2.0/fast/reference-to-video'
-const SYNCLABS_ENDPOINT   = 'fal-ai/sync-lipsync'
+const FAL_QUEUE_BASE    = 'https://queue.fal.run'
+const SEEDANCE_ENDPOINT = 'bytedance/seedance-2.0/fast/reference-to-video'
 
-export interface SeedanceResult   { requestId: string; status: 'submitted' | 'stub' }
-export interface SyncLabsResult  { requestId: string; status: 'submitted' | 'stub' }
+export interface SeedanceResult { requestId: string; status: 'submitted' | 'stub' }
 
 // ─── OpenAI API ───────────────────────────────────────────────────────────────
 const OPENAI_BASE = 'https://api.openai.com'
@@ -386,53 +384,6 @@ export const aiService = {
     if (!data.request_id) throw new Error(`Seedance: no request_id in response: ${text}`)
 
     logger.info(`[AI] Seedance job submitted: request_id=${data.request_id}`)
-    return { requestId: data.request_id, status: 'submitted' }
-  },
-
-  /**
-   * SyncLabs via fal.ai — lip-sync a base video to a voice audio track.
-   * Takes the Seedance output video + ElevenLabs audio → final lip-synced video.
-   * POST https://queue.fal.run/fal-ai/sync-lipsync
-   */
-  async syncLabsLipsync(params: {
-    videoUrl: string
-    audioUrl: string
-    referenceId: string
-    callbackUrl?: string
-  }): Promise<SyncLabsResult> {
-    const { falApiKey } = await settingsService.get()
-
-    if (!falApiKey) {
-      logger.warn('[AI] fal.ai key not set — returning stub for SyncLabs')
-      return { requestId: `stub-synclabs-${Date.now()}`, status: 'stub' }
-    }
-
-    const body = {
-      video_url: params.videoUrl,
-      audio_url: params.audioUrl,
-    }
-
-    const submitUrl = params.callbackUrl
-      ? `${FAL_QUEUE_BASE}/${SYNCLABS_ENDPOINT}?fal_webhook=${encodeURIComponent(params.callbackUrl)}`
-      : `${FAL_QUEUE_BASE}/${SYNCLABS_ENDPOINT}`
-
-    logger.info(`[AI] SyncLabs submitting: referenceId=${params.referenceId}`)
-    logger.info(`[AI] SyncLabs request URL: ${submitUrl}`)
-    logger.info(`[AI] SyncLabs request body: ${JSON.stringify(body)}`)
-
-    const res = await fetch(submitUrl, {
-      method:  'POST',
-      headers: { 'Authorization': `Key ${falApiKey}`, 'Content-Type': 'application/json' },
-      body:    JSON.stringify(body),
-    })
-
-    const text = await res.text()
-    if (!res.ok) throw new Error(`SyncLabs submit failed (${res.status}): ${text}`)
-
-    const data = JSON.parse(text) as { request_id?: string }
-    if (!data.request_id) throw new Error(`SyncLabs: no request_id in response: ${text}`)
-
-    logger.info(`[AI] SyncLabs job submitted: request_id=${data.request_id}`)
     return { requestId: data.request_id, status: 'submitted' }
   },
 
