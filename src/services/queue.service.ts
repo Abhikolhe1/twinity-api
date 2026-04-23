@@ -199,13 +199,17 @@ async function processJob(jobId: string): Promise<void> {
       ? (await s3Service.presignIfS3Short(job.backgroundImageUrl, 7200)) ?? job.backgroundImageUrl
       : undefined
 
+    const videoPrompt = [productTypDoc?.videoPrompt, job.sceneNotes]
+      .filter(Boolean)
+      .join('. ')
+
     const render = await aiService.seedanceVideo({
       audioUrl:           voiceAudioUrl,
       imageUrl:           imageUrl!,
       backgroundImageUrl,
       referenceId:        job.referenceId,
       callbackUrl,
-      videoPrompt:        productTypDoc?.videoPrompt,
+      videoPrompt:        videoPrompt || undefined,
     })
 
     job.seedanceRequestId = render.requestId
