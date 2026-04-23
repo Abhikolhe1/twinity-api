@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { createJob, getMyJobs, getMyStats, getJob, cancelJob, submitBookCall, improveScript, suggestScenePrompts, generateImage, uploadAsset, getJobDownloadUrl, adminListJobs, adminUpdateJobStatus, adminEnableDownload, adminApproveJob, adminRejectJob } from '../controllers/videoJob.controller'
+import { createJob, previewVoice, getMyJobs, getMyStats, getJob, cancelJob, submitBookCall, improveScript, suggestScenePrompts, generateImage, uploadAsset, getJobDownloadUrl, adminListJobs, adminUpdateJobStatus, adminEnableDownload, adminApproveJob, adminRejectJob } from '../controllers/videoJob.controller'
 import { requireAuth } from '../middleware/auth'
 import { requireAdmin, requirePermission } from '../middleware/adminAuth'
 
@@ -7,6 +7,7 @@ const router = Router()
 
 // Customer routes
 router.post('/', requireAuth, createJob)
+router.post('/preview-voice', requireAuth, previewVoice)
 router.post('/improve-script', requireAuth, improveScript)
 router.post('/scene-prompts', requireAuth, suggestScenePrompts)
 router.post('/generate-image', requireAuth, generateImage)

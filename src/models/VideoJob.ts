@@ -26,6 +26,12 @@ export interface IVideoJob extends Document {
   seedanceRequestId?: string    // fal.ai Seedance 2.0 queue request ID
   voiceJobId?: string           // jobId from ElevenLabs TTS
   voiceAudioUrl?: string       // S3 URL of generated voice audio
+  // Voice generation options
+  voiceModel?: string         // ElevenLabs TTS model id (default: eleven_v3)
+  voiceSpeed?: number         // Playback speed multiplier 0.25–4.0 (default: 1.0)
+  // Voice-change (speech-to-speech) — mutually exclusive with TTS script path
+  voiceChangeEnabled?: boolean
+  voiceChangeSourceUrl?: string   // URL of the customer-uploaded source audio
   // Scene settings (customer-provided context for video generation)
   propImages?: string[]
   sceneNotes?: string
@@ -68,6 +74,10 @@ const VideoJobSchema = new Schema<IVideoJob>(
     seedanceRequestId: { type: String },
     voiceJobId:        { type: String },
     voiceAudioUrl:      { type: String },
+    voiceModel:             { type: String },
+    voiceSpeed:             { type: Number, min: 0.25, max: 4.0 },
+    voiceChangeEnabled:     { type: Boolean, default: false },
+    voiceChangeSourceUrl:   { type: String },
     propImages:         [{ type: String }],
     sceneNotes:         { type: String },
     backgroundImageUrl: { type: String },

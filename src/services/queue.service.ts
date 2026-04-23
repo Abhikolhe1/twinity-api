@@ -14,7 +14,7 @@
 import { logger } from '../config/logger'
 import { VideoJob, IVideoJob } from '../models/VideoJob'
 import { ProductType } from '../models/ProductType'
-import { aiService } from './ai.service'
+import { aiService, ElevenLabsTTSModel, ElevenLabsSTSModel } from './ai.service'
 import { s3Service } from './s3.service'
 import { settingsService } from './settings.service'
 import { env } from '../config/env'
@@ -176,28 +176,58 @@ async function processJob(jobId: string): Promise<void> {
   try {
     const settings = await settingsService.get()
 
-    // ── Step 2: ElevenLabs TTS — generate voice audio ───────────────────
+    // ── Step 2: ElevenLabs — generate or change voice audio ─────────────
     if (!celeb.voiceModelId) throw new Error(`Celebrity ${celeb.name} has no ElevenLabs voiceModelId`)
     if (!settings.elevenLabsKey) throw new Error('ElevenLabs API key not configured')
 
-    const MAX_WORDS = 40
-    const scriptWords = job.script.trim().split(/\s+/)
-    const truncatedScript = scriptWords.length > MAX_WORDS
-      ? scriptWords.slice(0, MAX_WORDS).join(' ')
-      : job.script
-    if (scriptWords.length > MAX_WORDS) {
-      logger.warn(`[Queue] Job ${job.referenceId} — script truncated from ${scriptWords.length} to ${MAX_WORDS} words`)
+    let voiceAudioUrl: string
+
+    if (job.voiceChangeEnabled && job.voiceChangeSourceUrl) {
+      // Speech-to-Speech: download source audio, re-voice it as the celebrity
+      logger.info(`[Queue] Job ${job.referenceId} — voice-change mode: fetching source audio`)
+      const srcRes = await fetch(job.voiceChangeSourceUrl)
+      if (!srcRes.ok) throw new Error(`Failed to download voice-change source audio (${srcRes.status})`)
+      const srcBuffer  = Buffer.from(await srcRes.arrayBuffer())
+      const srcMime    = srcRes.headers.get('content-type') || 'audio/mpeg'
+
+      const stsResult = await aiService.changeVoice({
+        targetVoiceId: celeb.voiceModelId,
+        audioBuffer:   srcBuffer,
+        audioMimeType: srcMime,
+        celebSlug:     celeb.slug,
+        model:         job.voiceModel as ElevenLabsSTSModel | undefined,
+        speed:         job.voiceSpeed,
+      })
+      job.voiceJobId    = stsResult.jobId
+      job.voiceAudioUrl = stsResult.audioUrl
+      voiceAudioUrl     = stsResult.audioUrl
+      logger.info(`[Queue] Job ${job.referenceId} — ElevenLabs STS complete: ${voiceAudioUrl}`)
+    } else {
+      // Standard TTS path
+      const MAX_WORDS = 40
+      const scriptWords = job.script.trim().split(/\s+/)
+      const truncatedScript = scriptWords.length > MAX_WORDS
+        ? scriptWords.slice(0, MAX_WORDS).join(' ')
+        : job.script
+      if (scriptWords.length > MAX_WORDS) {
+        logger.warn(`[Queue] Job ${job.referenceId} — script truncated from ${scriptWords.length} to ${MAX_WORDS} words`)
+      }
+
+      const ttsScript = await aiService.enhanceScriptForTTS(truncatedScript)
+      logger.info(`[Queue] Job ${job.referenceId} — prosody-enhanced script ready`)
+
+      job.processedScript = ttsScript
+      const voice = await aiService.generateVoice(
+        celeb.voiceModelId,
+        ttsScript,
+        celeb.slug,
+        { model: job.voiceModel as ElevenLabsTTSModel | undefined, speed: job.voiceSpeed },
+      )
+      job.voiceJobId    = voice.jobId
+      job.voiceAudioUrl = voice.audioUrl
+      voiceAudioUrl     = voice.audioUrl
+      logger.info(`[Queue] Job ${job.referenceId} — ElevenLabs TTS generated: ${voiceAudioUrl} (${voice.durationSecs}s)`)
     }
-
-    const ttsScript = await aiService.enhanceScriptForTTS(truncatedScript)
-    logger.info(`[Queue] Job ${job.referenceId} — prosody-enhanced script ready`)
-
-    job.processedScript = ttsScript
-    const voice = await aiService.generateVoice(celeb.voiceModelId, ttsScript, celeb.slug)
-    job.voiceJobId    = voice.jobId
-    job.voiceAudioUrl = voice.audioUrl
-    const voiceAudioUrl = voice.audioUrl
-    logger.info(`[Queue] Job ${job.referenceId} — ElevenLabs voice generated: ${voiceAudioUrl} (${voice.durationSecs}s)`)
 
     // ── Step 3: Seedance 2.0 (image + audio → video) ────────────────────
     if (!celeb.thumbnailUrl) throw new Error(`Celebrity ${celeb.name} has no thumbnailUrl — upload a photo in the admin panel`)
@@ -209,12 +239,18 @@ async function processJob(jobId: string): Promise<void> {
 
     const productTypDoc = await ProductType.findOne({ slug: job.productType }).lean()
 
+    // Presign background image (2h) so fal.ai can download it
+    const backgroundImageUrl = job.backgroundImageUrl
+      ? (await s3Service.presignIfS3Short(job.backgroundImageUrl, 7200)) ?? job.backgroundImageUrl
+      : undefined
+
     const render = await aiService.seedanceVideo({
-      audioUrl:    voiceAudioUrl,
-      imageUrl:    imageUrl!,
-      referenceId: job.referenceId,
+      audioUrl:           voiceAudioUrl,
+      imageUrl:           imageUrl!,
+      backgroundImageUrl,
+      referenceId:        job.referenceId,
       callbackUrl,
-      videoPrompt: productTypDoc?.videoPrompt,
+      videoPrompt:        productTypDoc?.videoPrompt,
     })
 
     job.seedanceRequestId = render.requestId

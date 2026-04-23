@@ -8,7 +8,7 @@ import { AppError } from '../middleware/errorHandler'
 import { queueService } from '../services/queue.service'
 import { emailService } from '../services/email.service'
 import { s3Service } from '../services/s3.service'
-import { aiService } from '../services/ai.service'
+import { aiService, ElevenLabsTTSModel, ElevenLabsSTSModel } from '../services/ai.service'
 import { settingsService } from '../services/settings.service'
 import { Settings } from '../models/Settings'
 import { ProductType } from '../models/ProductType'
@@ -33,7 +33,8 @@ function generateRef(): string {
 export async function createJob(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { celebrityId, productType, purpose, templateId, script, tone, duration, aspectRatio, resolution, channels,
-            propImages, sceneNotes, backgroundImageUrl } = req.body
+            propImages, sceneNotes, backgroundImageUrl,
+            voiceModel, voiceSpeed, voiceChangeEnabled, voiceChangeSourceUrl } = req.body
 
     const celeb = await Celebrity.findById(celebrityId)
     if (!celeb || !celeb.isActive) throw new AppError('Celebrity not found or inactive', 404)
@@ -85,6 +86,10 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
       propImages:         Array.isArray(propImages) && propImages.length ? propImages : undefined,
       sceneNotes:         sceneNotes         || undefined,
       backgroundImageUrl: backgroundImageUrl || undefined,
+      voiceModel:             voiceModel             || undefined,
+      voiceSpeed:             voiceSpeed != null ? Number(voiceSpeed) : undefined,
+      voiceChangeEnabled:     voiceChangeEnabled === true || voiceChangeEnabled === 'true' || undefined,
+      voiceChangeSourceUrl:   voiceChangeSourceUrl   || undefined,
     })
 
     // Increment celebrity order count
@@ -94,6 +99,53 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
     await queueService.dispatchVideoJob(String(job._id))
 
     res.status(201).json({ success: true, data: job })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function previewVoice(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { celebrityId, script, voiceModel, voiceSpeed, voiceChangeEnabled, voiceChangeSourceUrl } = req.body
+
+    if (!celebrityId || !script?.trim()) throw new AppError('celebrityId and script are required', 400)
+
+    const celeb = await Celebrity.findById(celebrityId)
+    if (!celeb || !celeb.isActive) throw new AppError('Celebrity not found or inactive', 404)
+    if (!celeb.voiceModelId) throw new AppError('Celebrity has no voice model configured', 400)
+
+    const speed = voiceSpeed != null ? Number(voiceSpeed) : undefined
+
+    let audioUrl: string
+
+    if (voiceChangeEnabled && voiceChangeSourceUrl) {
+      const srcRes = await fetch(voiceChangeSourceUrl as string)
+      if (!srcRes.ok) throw new AppError('Failed to fetch source audio', 400)
+      const srcBuffer = Buffer.from(await srcRes.arrayBuffer())
+      const result = await aiService.changeVoice({
+        targetVoiceId: celeb.voiceModelId,
+        audioBuffer: srcBuffer,
+        audioMimeType: srcRes.headers.get('content-type') || 'audio/mpeg',
+        celebSlug: celeb.slug,
+        model: voiceModel as ElevenLabsSTSModel | undefined,
+        speed,
+      })
+      audioUrl = result.audioUrl
+    } else {
+      const STS_MODELS = ['eleven_multilingual_sts_v2', 'eleven_english_sts_v2']
+      const safeTTSModel: ElevenLabsTTSModel = STS_MODELS.includes(voiceModel)
+        ? 'eleven_v3'
+        : (voiceModel as ElevenLabsTTSModel | undefined) ?? 'eleven_v3'
+      const result = await aiService.generateVoice(
+        celeb.voiceModelId,
+        String(script),
+        celeb.slug,
+        { model: safeTTSModel, speed },
+      )
+      audioUrl = result.audioUrl
+    }
+
+    res.json({ success: true, audioUrl })
   } catch (err) {
     next(err)
   }

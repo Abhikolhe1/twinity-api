@@ -16,6 +16,30 @@ import { s3Service } from './s3.service'
 export interface VoiceCloneResult   { jobId: string; audioUrl: string; durationSecs: number }
 export interface VoiceCloneIdResult { voiceId: string }
 
+export type ElevenLabsTTSModel =
+  | 'eleven_v3'
+  | 'eleven_turbo_v2_5'
+  | 'eleven_multilingual_v2'
+  | 'eleven_monolingual_v1'
+
+export type ElevenLabsSTSModel =
+  | 'eleven_multilingual_sts_v2'
+  | 'eleven_english_sts_v2'
+
+export const ELEVENLABS_TTS_MODELS: ElevenLabsTTSModel[] = [
+  'eleven_v3',
+  'eleven_turbo_v2_5',
+  'eleven_multilingual_v2',
+  'eleven_monolingual_v1',
+]
+
+export const ELEVENLABS_STS_MODELS: ElevenLabsSTSModel[] = [
+  'eleven_multilingual_sts_v2',
+  'eleven_english_sts_v2',
+]
+
+export interface ChangeVoiceResult { jobId: string; audioUrl: string }
+
 // ─── ElevenLabs ───────────────────────────────────────────────────────────────
 const ELEVENLABS_BASE = 'https://api.elevenlabs.io/v1'
 
@@ -95,8 +119,11 @@ export const aiService = {
     celebrityVoiceId: string,
     script: string,
     celebSlug: string,
+    options?: { model?: ElevenLabsTTSModel; speed?: number },
   ): Promise<VoiceCloneResult> {
-    logger.info(`[AI] ElevenLabs voice gen: voiceId=${celebrityVoiceId}`)
+    const model = options?.model ?? 'eleven_v3'
+    const speed = options?.speed ?? 1.0
+    logger.info(`[AI] ElevenLabs voice gen: voiceId=${celebrityVoiceId}, model=${model}, speed=${speed}`)
     const { elevenLabsKey } = await settingsService.get()
 
     if (!elevenLabsKey) {
@@ -112,19 +139,28 @@ export const aiService = {
     const detectedLang = detectLanguage(script)
     logger.info(`[AI] Detected script language: ${detectedLang}`)
 
+    // eleven_v3 accepts language_code; multilingual_v2 does not — omit it for safety on unsupported models
+    const supportsLangCode = model === 'eleven_v3' || model === 'eleven_turbo_v2_5'
+    const ttsBody: Record<string, unknown> = {
+      text:           script,
+      model_id:       model,
+      voice_settings: { speed },
+    }
+    if (supportsLangCode) ttsBody.language_code = detectedLang
+
     const res = await fetch(
       `${ELEVENLABS_BASE}/text-to-speech/${celebrityVoiceId}/with-timestamps?output_format=pcm_22050`,
       {
         method:  'POST',
         headers: { 'xi-api-key': elevenLabsKey, 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          text:          script,
-          model_id:      'eleven_v3',
-          language_code: detectedLang
-        }),
+        body:    JSON.stringify(ttsBody),
       },
     )
-    if (!res.ok) throw new Error(`ElevenLabs failed (${res.status})`)
+    if (!res.ok) {
+      const errText = await res.text()
+      logger.error(`[AI] ElevenLabs TTS failed (${res.status}): ${errText}`)
+      throw new Error(`ElevenLabs failed (${res.status}): ${errText}`)
+    }
 
     const data = await res.json() as {
       audio_base64: string
@@ -293,6 +329,7 @@ export const aiService = {
   async seedanceVideo(params: {
     audioUrl: string
     imageUrl: string
+    backgroundImageUrl?: string   // AI-generated scene image; replaces thumbnailUrl when present
     referenceId: string
     callbackUrl?: string
     videoPrompt?: string
@@ -307,13 +344,18 @@ export const aiService = {
     if (!params.imageUrl) throw new Error('Seedance: imageUrl is empty — upload a photo for this celebrity in the admin panel')
     if (!params.audioUrl) throw new Error('Seedance: audioUrl is empty — ElevenLabs audio URL not available')
 
-    const prompt = params.videoPrompt?.trim() || 'Natural, realistic celebrity video. Professional tone. Clean motion.'
+    // Use the AI-generated background image when the customer selected one;
+    // fall back to the celebrity thumbnail otherwise.
+    const primaryImage = params.backgroundImageUrl ?? params.imageUrl
+    logger.info(`[AI] Seedance image: ${params.backgroundImageUrl ? 'AI background' : 'celebrity thumbnail'} → ${primaryImage}`)
+
+    const prompt = params.videoPrompt?.trim() || ''
 
     logger.info(`[AI] Seedance submitting: referenceId=${params.referenceId}, prompt="${prompt}"`)
 
     const body: Record<string, unknown> = {
       prompt,
-      image_urls:     [params.imageUrl],
+      image_urls:     [primaryImage],
       audio_urls:     [params.audioUrl],
       generate_audio: true,
       resolution:     '720p',
@@ -577,5 +619,68 @@ export const aiService = {
 
     logger.info('[AI] Gemini thumbnail processed successfully')
     return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`
+  },
+
+  /**
+   * ElevenLabs Speech-to-Speech — convert an existing audio recording to a
+   * celebrity's cloned voice while preserving timing, emotion and delivery.
+   * The caller provides a raw audio buffer (any format ElevenLabs accepts:
+   * mp3, wav, m4a, ogg, flac, webm).  The output is a WAV file uploaded to S3.
+   */
+  async changeVoice(params: {
+    targetVoiceId: string
+    audioBuffer: Buffer
+    audioMimeType?: string
+    celebSlug: string
+    model?: ElevenLabsSTSModel
+    speed?: number
+  }): Promise<ChangeVoiceResult> {
+    const model = params.model ?? 'eleven_multilingual_sts_v2'
+    const speed = params.speed ?? 1.0
+    logger.info(
+      `[AI] ElevenLabs STS: targetVoiceId=${params.targetVoiceId}, model=${model}, speed=${speed}`,
+    )
+    const { elevenLabsKey } = await settingsService.get()
+
+    if (!elevenLabsKey) {
+      logger.warn('[AI] ElevenLabs key not set — returning stub for changeVoice')
+      return { jobId: `stub-sts-${Date.now()}`, audioUrl: 'https://stub-audio.mp3' }
+    }
+
+    const form = new FormDataLib()
+    form.append('audio', params.audioBuffer, {
+      filename:    'source.audio',
+      contentType: params.audioMimeType || 'audio/mpeg',
+      knownLength: params.audioBuffer.length,
+    })
+    form.append('model_id', model)
+    form.append('voice_settings', JSON.stringify({ speed, stability: 0.5, similarity_boost: 0.75 }))
+
+    const res = await fetch(
+      `${ELEVENLABS_BASE}/speech-to-speech/${params.targetVoiceId}?output_format=mp3_44100_128`,
+      {
+        method: 'POST',
+        headers: { 'xi-api-key': elevenLabsKey, ...form.getHeaders() },
+        // @ts-ignore — form-data getBuffer() is a Buffer, which fetch accepts
+        body: form.getBuffer(),
+      },
+    )
+
+    if (!res.ok) {
+      const err = await res.text()
+      throw new Error(`ElevenLabs STS failed (${res.status}): ${err}`)
+    }
+
+    const audioBuffer = Buffer.from(await res.arrayBuffer())
+    const jobId = `sts-${Date.now()}`
+    const { s3Bucket } = await settingsService.get()
+    const key    = `celebrities/${params.celebSlug}/voice-changed/${jobId}.mp3`
+    const upload = await s3Service.upload(s3Bucket, key, audioBuffer, 'audio/mpeg')
+    const audioUrl = upload.stub
+      ? upload.url
+      : await s3Service.getPresignedUrl(s3Bucket, upload.key, 7200)
+
+    logger.info(`[AI] ElevenLabs STS audio uploaded: ${audioUrl}`)
+    return { jobId, audioUrl }
   },
 }
