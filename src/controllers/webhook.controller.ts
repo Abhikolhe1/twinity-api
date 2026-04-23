@@ -17,11 +17,11 @@ import { logger } from '../config/logger'
 
 interface FalWebhookPayload {
   request_id?: string
-  response_code?: number          // 200 = completed, non-200 = failed
+  status?: string      // "OK" = completed, "ERROR" = failed
   payload?: {
     video?: { url?: string; content_type?: string; file_name?: string; file_size?: number }
   }
-  error?: string
+  error?: string | null
 }
 
 async function archiveVideoToS3(
@@ -57,15 +57,15 @@ export async function falWebhook(req: Request, res: Response): Promise<void> {
     const payload = req.body as FalWebhookPayload
     logger.info(`[Webhook] fal.ai raw payload: ${JSON.stringify(payload)}`)
 
-    const requestId    = payload.request_id   ?? ''
-    const responseCode = payload.response_code            // 200 = success, non-200 = failure
-    const falUrl       = payload.payload?.video?.url ?? ''
-    const errorMsg     = payload.error ?? ''
+    const requestId = payload.request_id ?? ''
+    const status    = payload.status ?? ''
+    const falUrl    = payload.payload?.video?.url ?? ''
+    const errorMsg  = payload.error ?? ''
 
-    logger.info(`[Webhook] fal.ai event — response_code=${responseCode}, request_id=${requestId}`)
+    logger.info(`[Webhook] fal.ai event — status=${status}, request_id=${requestId}`)
 
-    if (responseCode === undefined) {
-      logger.info(`[Webhook] fal.ai: no response_code in payload — ignoring`)
+    if (status !== 'OK' && status !== 'ERROR') {
+      logger.info(`[Webhook] fal.ai: unhandled status "${status}" — ignoring`)
       res.json({ success: true })
       return
     }
@@ -77,7 +77,7 @@ export async function falWebhook(req: Request, res: Response): Promise<void> {
       return
     }
 
-    if (responseCode === 200) {
+    if (status === 'OK') {
       if (!falUrl) {
         logger.error(`[Webhook] fal.ai: no video.url for job=${job.referenceId} — cannot proceed`)
         res.json({ success: true })
@@ -101,7 +101,7 @@ export async function falWebhook(req: Request, res: Response): Promise<void> {
       }
     } else {
       job.status       = 'failed'
-      job.errorMessage = errorMsg || `Seedance 2.0 render failed (response_code=${responseCode})`
+      job.errorMessage = String(errorMsg || 'Seedance 2.0 render failed')
       job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
       await job.save()
       logger.warn(`[Webhook] Seedance failed: job=${job.referenceId}, error=${errorMsg}`)
