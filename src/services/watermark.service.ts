@@ -25,7 +25,7 @@ import { settingsService } from './settings.service'
 import { logger } from '../config/logger'
 
 // Bundled Inter Bold (700) — no system fonts required on the server
-const FONT_PATH = join(__dirname, '../../node_modules/@fontsource/inter/files/inter-latin-700-normal.woff2')
+const FONT_PATH = join(__dirname, '../../public/fonts/Inter-Regular.woff2')
 let _fontBase64: string | null = null
 async function getFontBase64(): Promise<string> {
   if (!_fontBase64) {
@@ -60,9 +60,9 @@ async function buildWatermarkPng(text: string, opacity: number): Promise<Buffer>
     const y = padY + (i + 1) * lineHeight - 4
     return [
       `<text x="${padX + 1}" y="${y + 1}" font-family="Inter" font-size="${fontSize}"`,
-      `  font-weight="bold" fill="black" fill-opacity="${(opacity * 0.6).toFixed(2)}">${escapeXml(line)}</text>`,
+      `  font-weight="normal" fill="black" fill-opacity="${(opacity * 0.6).toFixed(2)}">${escapeXml(line)}</text>`,
       `<text x="${padX}" y="${y}" font-family="Inter" font-size="${fontSize}"`,
-      `  font-weight="bold" fill="white" fill-opacity="${opacity.toFixed(2)}">${escapeXml(line)}</text>`,
+      `  font-weight="normal" fill="white" fill-opacity="${opacity.toFixed(2)}">${escapeXml(line)}</text>`,
     ].join('\n')
   }).join('\n')
 
@@ -71,7 +71,7 @@ async function buildWatermarkPng(text: string, opacity: number): Promise<Buffer>
     <style>
       @font-face {
         font-family: 'Inter';
-        font-weight: 700;
+        font-weight: 400;
         src: url('data:font/woff2;base64,${fontBase64}') format('woff2');
       }
     </style>
