@@ -24,6 +24,17 @@ import { s3Service } from './s3.service'
 import { settingsService } from './settings.service'
 import { logger } from '../config/logger'
 
+// Bundled Inter Bold (700) — no system fonts required on the server
+const FONT_PATH = join(__dirname, '../../node_modules/@fontsource/inter/files/inter-latin-700-normal.woff2')
+let _fontBase64: string | null = null
+async function getFontBase64(): Promise<string> {
+  if (!_fontBase64) {
+    const buf = await readFile(FONT_PATH)
+    _fontBase64 = buf.toString('base64')
+  }
+  return _fontBase64
+}
+
 const ffmpegBin: string = (require('@ffmpeg-installer/ffmpeg') as { path: string }).path
 ffmpeg.setFfmpegPath(ffmpegBin)
 
@@ -43,17 +54,28 @@ async function buildWatermarkPng(text: string, opacity: number): Promise<Buffer>
   const width      = Math.ceil(maxLen * fontSize * 0.58) + padX * 2 + 20
   const height     = lines.length * lineHeight + padY * 2
 
+  const fontBase64 = await getFontBase64()
+
   const svgLines = lines.map((line, i) => {
     const y = padY + (i + 1) * lineHeight - 4
     return [
-      `<text x="${padX + 1}" y="${y + 1}" font-family="sans-serif" font-size="${fontSize}"`,
+      `<text x="${padX + 1}" y="${y + 1}" font-family="Inter" font-size="${fontSize}"`,
       `  font-weight="bold" fill="black" fill-opacity="${(opacity * 0.6).toFixed(2)}">${escapeXml(line)}</text>`,
-      `<text x="${padX}" y="${y}" font-family="sans-serif" font-size="${fontSize}"`,
+      `<text x="${padX}" y="${y}" font-family="Inter" font-size="${fontSize}"`,
       `  font-weight="bold" fill="white" fill-opacity="${opacity.toFixed(2)}">${escapeXml(line)}</text>`,
     ].join('\n')
   }).join('\n')
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+  <defs>
+    <style>
+      @font-face {
+        font-family: 'Inter';
+        font-weight: 700;
+        src: url('data:font/woff2;base64,${fontBase64}') format('woff2');
+      }
+    </style>
+  </defs>
   ${svgLines}
 </svg>`
 
