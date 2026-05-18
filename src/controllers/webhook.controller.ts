@@ -12,6 +12,7 @@ import { VideoJob } from '../models/VideoJob'
 import { User } from '../models/User'
 import { settingsService } from '../services/settings.service'
 import { emailService } from '../services/email.service'
+import { applyWatermarkAndAdvanceJob } from '../services/watermark.service'
 import { logger } from '../config/logger'
 
 export async function creatifyWebhook(req: Request, res: Response): Promise<void> {
@@ -48,18 +49,19 @@ export async function creatifyWebhook(req: Request, res: Response): Promise<void
         return
       }
 
-      job.finalVideoUrl  = videoUrl
-      job.watermarkedUrl = videoUrl
-      job.previewUrl     = videoUrl
-      job.status         = 'review'
-      job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'Creatify Aurora complete — pending CS approval' })
-      await job.save()
-      logger.info(`[Webhook] Creatify complete: job=${job.referenceId}, url=${videoUrl}`)
+      // Respond to Creatify immediately — watermarking can take 30-60 s and must not block the webhook
+      res.json({ success: true })
 
-      const { adminEmail } = await settingsService.get()
-      if (adminEmail) {
-        emailService.sendNewLeadNotification({ email: adminEmail } as any).catch(() => null)
-      }
+      // Notify admin (non-blocking)
+      settingsService.get().then(({ adminEmail }) => {
+        if (adminEmail) emailService.sendNewLeadNotification({ email: adminEmail } as any).catch(() => null)
+      }).catch(() => null)
+
+      // Apply watermark and advance job to review in the background
+      applyWatermarkAndAdvanceJob(job, videoUrl)
+        .then(() => logger.info(`[Webhook] Job ${job.referenceId} → review (watermarked)`))
+        .catch(err => logger.error(`[Webhook] applyWatermarkAndAdvanceJob failed for job ${job.referenceId}:`, err))
+      return
     } else {
       job.status       = 'failed'
       job.errorMessage = errorMsg || 'Creatify Aurora render failed'

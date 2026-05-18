@@ -15,7 +15,6 @@ async function start() {
     logger.info(`  Admin:       /api/admin`)
     logger.info(`  Templates:   /api/templates`)
   })
-  queueService.startPoller()
 }
 
 start()

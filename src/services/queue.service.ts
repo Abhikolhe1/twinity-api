@@ -1,94 +1,18 @@
 /**
- * Queue Service — processes video generation jobs.
+ * Queue Service — submits video generation jobs to Creatify Aurora.
  *
  * Pipeline:
  *   1. Use pre-generated voice audio (recorded during wizard preview step)
  *   2. Submit Creatify Aurora job (celebrity image + audio → lip-synced video, async)
- *      — completion delivered via:
- *        a) Creatify webhook → creatifyWebhook()   (when SERVER_URL is set)
- *        b) Status poll fallback — pollInProgressJobs() checks every 30s
+ *      — completion delivered via Creatify webhook → /api/webhooks/creatify
  *
  * Stub mode (no Creatify keys): job advances directly to review with audio preview URL.
  */
 import { logger } from '../config/logger'
-import { VideoJob, IVideoJob } from '../models/VideoJob'
+import { VideoJob } from '../models/VideoJob'
 import { aiService } from './ai.service'
 import { s3Service } from './s3.service'
-import { settingsService } from './settings.service'
 import { env } from '../config/env'
-
-const POLL_INTERVAL_MS = 30_000
-
-interface CreatifyStatusResponse {
-  id?: string
-  status?: string
-  video_output?: string
-  failed_reason?: string
-}
-
-async function pollCreatifyJobs(
-  jobs: IVideoJob[],
-  apiId: string,
-  apiKey: string,
-): Promise<void> {
-  for (const job of jobs) {
-    if (!job.creatifyJobId) continue
-    try {
-      const res = await fetch(`https://api.creatify.ai/api/aurora/${job.creatifyJobId}/`, {
-        headers: {
-          'X-API-ID':  apiId,
-          'X-API-KEY': apiKey,
-        },
-      })
-      if (!res.ok) {
-        logger.warn(`[Queue] Creatify poll ${res.status} for job ${job.referenceId}`)
-        continue
-      }
-      const data = await res.json() as CreatifyStatusResponse
-      logger.info(`[Queue] Creatify poll ${job.referenceId}: status=${data.status}`)
-
-      if (data.status === 'done') {
-        const videoUrl = data.video_output ?? ''
-        if (!videoUrl) {
-          logger.warn(`[Queue] Creatify poll: no video_output for ${job.referenceId}`)
-          continue
-        }
-        job.finalVideoUrl  = videoUrl
-        job.watermarkedUrl = videoUrl
-        job.previewUrl     = videoUrl
-        job.status         = 'review'
-        job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'Creatify Aurora complete (poll)' })
-        await job.save()
-        logger.info(`[Queue] Job ${job.referenceId} → review via Creatify poll, url=${videoUrl}`)
-      } else if (data.status === 'failed') {
-        job.status = 'failed'
-        job.errorMessage = data.failed_reason ?? 'Creatify Aurora render failed'
-        job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
-        await job.save()
-        logger.warn(`[Queue] Job ${job.referenceId} → failed via Creatify poll`)
-      }
-    } catch (err) {
-      logger.warn(`[Queue] Creatify poll error for job ${job.referenceId}:`, err)
-    }
-  }
-}
-
-async function pollInProgressJobs(): Promise<void> {
-  try {
-    const jobs = await VideoJob.find({ status: 'in-progress' })
-    if (jobs.length === 0) return
-
-    logger.info(`[Queue] Polling ${jobs.length} in-progress job(s)`)
-    const settings = await settingsService.get()
-
-    const creatifyJobs = jobs.filter(j => j.creatifyJobId && !j.finalVideoUrl)
-    if (creatifyJobs.length > 0 && settings.creatifyApiId && settings.creatifyApiKey) {
-      await pollCreatifyJobs(creatifyJobs, settings.creatifyApiId, settings.creatifyApiKey)
-    }
-  } catch (err) {
-    logger.error('[Queue] pollInProgressJobs error:', err)
-  }
-}
 
 async function processJob(jobId: string): Promise<void> {
   logger.info(`[Queue] processJob started: jobId=${jobId}`)
@@ -119,20 +43,17 @@ async function processJob(jobId: string): Promise<void> {
     thumbnailUrl?: string
   }
 
-  // ── Step 1: in-progress ──────────────────────────────────────────────
   job.status = 'in-progress'
   job.statusHistory.push({ status: 'in-progress', timestamp: new Date(), note: 'AI processing started' })
   await job.save()
   logger.info(`[Queue] Job ${job.referenceId} → in-progress`)
 
   try {
-    // ── Step 1: Use pre-generated preview audio ──────────────────────────
     if (!job.voiceAudioUrl) throw new Error('No voice audio — complete a voice preview in the wizard before generating')
 
     const voiceAudioUrl = (await s3Service.presignIfS3Short(job.voiceAudioUrl, 7200)) ?? job.voiceAudioUrl
     logger.info(`[Queue] Job ${job.referenceId} — using preview audio: ${voiceAudioUrl}`)
 
-    // ── Step 2: Creatify Aurora (image + audio → lip-synced video) ──────
     if (!celeb.thumbnailUrl) throw new Error(`Celebrity ${celeb.name} has no thumbnailUrl — upload a photo in the admin panel`)
 
     const imageUrl = await s3Service.presignIfS3Short(celeb.thumbnailUrl, 7200)
@@ -185,11 +106,5 @@ export const queueService = {
 
   async dispatchNotification(type: string, payload: Record<string, unknown>): Promise<void> {
     logger.info(`[Queue] Notification dispatch: ${type}`, payload)
-  },
-
-  startPoller(): void {
-    logger.info(`[Queue] Starting Creatify status poller (interval: ${POLL_INTERVAL_MS / 1000}s)`)
-    setInterval(pollInProgressJobs, POLL_INTERVAL_MS)
-    pollInProgressJobs().catch(() => null)
   },
 }
