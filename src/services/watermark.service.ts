@@ -1,17 +1,20 @@
 /**
- * Watermark Service — bakes a text watermark into a video using ffmpeg drawtext.
+ * Watermark Service — bakes a text watermark into a video.
  *
- * Uses ffmpeg's built-in drawtext filter (no external font file required).
- * A semi-transparent background box is drawn behind the text so it is legible
- * on both dark and light video content.
+ * Approach:
+ *   1. sharp renders the watermark text into a transparent PNG (uses its own
+ *      bundled libvips/librsvg — no system fonts required)
+ *   2. ffmpeg overlays the PNG onto the video with explicit stream mapping
+ *   3. Both the clean original and the watermarked copy are uploaded to S3
  *
  * Settings consumed (from Settings DB):
- *   watermarkText     — displayed text, e.g. "twinity.ai PREVIEW"
+ *   watermarkText     — e.g. "twinity.ai PREVIEW"
  *   watermarkOpacity  — 0.0–1.0
  *   watermarkPosition — "Bottom Center" | "Bottom Left" | "Bottom Right" |
  *                       "Top Left" | "Top Center" | "Top Right" | "Center"
  */
 import ffmpeg from 'fluent-ffmpeg'
+import sharp from 'sharp'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { writeFile, unlink, readFile } from 'fs/promises'
@@ -24,29 +27,54 @@ import { logger } from '../config/logger'
 const ffmpegBin: string = (require('@ffmpeg-installer/ffmpeg') as { path: string }).path
 ffmpeg.setFfmpegPath(ffmpegBin)
 
-// ── Text sanitiser ────────────────────────────────────────────────────────────
-// ffmpeg drawtext has a strict escaping requirement.
-// Replace non-ASCII glyphs (e.g. ·) with ASCII equivalents before passing.
-function sanitiseForDrawtext(text: string): string {
-  return text
-    .replace(/·/g, '-')          // middle dot → hyphen
-    .replace(/[^\x20-\x7E]/g, '') // strip any remaining non-printable / non-ASCII
-    .replace(/'/g, '')            // remove apostrophes (hard to escape safely)
-    .replace(/:/g, '\\:')         // colon must be escaped in drawtext value
-    .replace(/\\/g, '\\\\')       // backslash must be doubled
-    .trim()
+// ── Watermark PNG ─────────────────────────────────────────────────────────────
+
+function escapeXml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-// ── Position → drawtext x/y ───────────────────────────────────────────────────
-function resolveXY(position: string): { x: string; y: string } {
-  const map: Record<string, { x: string; y: string }> = {
-    'Top Left':      { x: '20',              y: '20'           },
-    'Top Center':    { x: '(w-text_w)/2',    y: '20'           },
-    'Top Right':     { x: 'w-text_w-20',     y: '20'           },
-    'Center':        { x: '(w-text_w)/2',    y: '(h-text_h)/2' },
-    'Bottom Left':   { x: '20',              y: 'h-text_h-20'  },
-    'Bottom Center': { x: '(w-text_w)/2',    y: 'h-text_h-20'  },
-    'Bottom Right':  { x: 'w-text_w-20',     y: 'h-text_h-20'  },
+async function buildWatermarkPng(text: string, opacity: number): Promise<Buffer> {
+  const fontSize   = 24
+  const lineHeight = fontSize + 12
+  const padX       = 20
+  const padY       = 12
+  const lines      = text.split('\n')
+  const maxLen     = Math.max(...lines.map(l => l.length))
+  const width      = Math.ceil(maxLen * fontSize * 0.58) + padX * 2 + 20
+  const height     = lines.length * lineHeight + padY * 2
+
+  const boxOpacity = Math.min(1, opacity * 0.75).toFixed(2)
+
+  const svgLines = lines.map((line, i) => {
+    const y = padY + (i + 1) * lineHeight - 4
+    return [
+      `<text x="${padX + 1}" y="${y + 1}" font-family="sans-serif" font-size="${fontSize}"`,
+      `  font-weight="bold" fill="black" fill-opacity="${(opacity * 0.6).toFixed(2)}">${escapeXml(line)}</text>`,
+      `<text x="${padX}" y="${y}" font-family="sans-serif" font-size="${fontSize}"`,
+      `  font-weight="bold" fill="white" fill-opacity="${opacity.toFixed(2)}">${escapeXml(line)}</text>`,
+    ].join('\n')
+  }).join('\n')
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+  <rect width="${width}" height="${height}" rx="4" fill="black" fill-opacity="${boxOpacity}"/>
+  ${svgLines}
+</svg>`
+
+  return sharp(Buffer.from(svg)).png().toBuffer()
+}
+
+// ── Position → ffmpeg overlay expression ─────────────────────────────────────
+// W/H = video dims, w/h = watermark dims
+
+function resolveOverlayXY(position: string): string {
+  const map: Record<string, string> = {
+    'Top Left':      '20:20',
+    'Top Center':    '(W-w)/2:20',
+    'Top Right':     'W-w-20:20',
+    'Center':        '(W-w)/2:(H-h)/2',
+    'Bottom Left':   '20:H-h-20',
+    'Bottom Center': '(W-w)/2:H-h-20',
+    'Bottom Right':  'W-w-20:H-h-20',
   }
   return map[position] ?? map['Bottom Center']
 }
@@ -60,43 +88,41 @@ interface WatermarkResult {
 
 async function applyWatermark(videoUrl: string, referenceId: string): Promise<WatermarkResult> {
   const settings = await settingsService.get()
-  const rawText  = settings.watermarkText     || 'twinity.ai PREVIEW'
+  const text     = settings.watermarkText     || 'twinity.ai PREVIEW'
   const opacity  = Math.min(1, Math.max(0.1, parseFloat(settings.watermarkOpacity || '0.45')))
   const position = settings.watermarkPosition || 'Bottom Center'
-
-  const text = sanitiseForDrawtext(rawText)
-  const { x, y } = resolveXY(position)
-  const boxOpacity = Math.min(1, opacity * 0.8)
-
-  // Build the drawtext filter string
-  const drawtextFilter = [
-    `drawtext=text='${text}'`,
-    `fontsize=28`,
-    `fontcolor=white@${opacity.toFixed(2)}`,
-    `x=${x}`,
-    `y=${y}`,
-    `box=1`,
-    `boxcolor=black@${boxOpacity.toFixed(2)}`,
-    `boxborderw=10`,
-  ].join(':')
 
   logger.info(`[Watermark] Starting: job=${referenceId}, position=${position}`)
 
   const videoRes = await fetch(videoUrl)
-  if (!videoRes.ok) throw new Error(`Failed to download video for watermarking (HTTP ${videoRes.status})`)
+  if (!videoRes.ok) throw new Error(`Failed to download video (HTTP ${videoRes.status})`)
   const videoBuffer = Buffer.from(await videoRes.arrayBuffer())
 
-  const uid        = randomUUID()
-  const inputPath  = join(tmpdir(), `tw-${uid}-in.mp4`)
-  const outputPath = join(tmpdir(), `tw-${uid}-out.mp4`)
+  const uid           = randomUUID()
+  const inputPath     = join(tmpdir(), `tw-${uid}-in.mp4`)
+  const watermarkPath = join(tmpdir(), `tw-${uid}-wm.png`)
+  const outputPath    = join(tmpdir(), `tw-${uid}-out.mp4`)
 
   try {
     await writeFile(inputPath, videoBuffer)
 
+    const wmBuffer = await buildWatermarkPng(text, opacity)
+    await writeFile(watermarkPath, wmBuffer)
+
+    const xy = resolveOverlayXY(position)
+
     await new Promise<void>((resolve, reject) => {
       ffmpeg(inputPath)
-        .videoFilter(drawtextFilter)
-        .outputOptions(['-c:a copy', '-movflags +faststart'])
+        .input(watermarkPath)
+        // Label the overlaid stream [vout] and map it explicitly.
+        // Without the label + -map, ffmpeg may write the original stream unchanged.
+        .complexFilter([`[0:v][1:v]overlay=${xy}[vout]`])
+        .outputOptions([
+          '-map [vout]',
+          '-map 0:a?',       // include audio if present (? = optional)
+          '-c:a copy',
+          '-movflags +faststart',
+        ])
         .save(outputPath)
         .on('end', () => resolve())
         .on('error', (err: Error) => reject(err))
@@ -120,6 +146,7 @@ async function applyWatermark(videoUrl: string, referenceId: string): Promise<Wa
   } finally {
     await Promise.all([
       unlink(inputPath).catch(() => null),
+      unlink(watermarkPath).catch(() => null),
       unlink(outputPath).catch(() => null),
     ])
   }
