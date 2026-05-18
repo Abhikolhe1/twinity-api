@@ -15,6 +15,57 @@ import { emailService } from '../services/email.service'
 import { applyWatermarkAndAdvanceJob } from '../services/watermark.service'
 import { logger } from '../config/logger'
 
+export async function testWatermark(req: Request, res: Response): Promise<void> {
+  try {
+    const { videoUrl, referenceId } = req.body as { videoUrl?: string; referenceId?: string }
+
+    let targetUrl = videoUrl
+    const targetReferenceId = referenceId ?? `test-${Date.now()}`
+
+    if (!targetUrl && referenceId) {
+      const job = await VideoJob.findOne({ referenceId })
+      if (!job) {
+        res.status(404).json({ success: false, message: `No job found for referenceId=${referenceId}` })
+        return
+      }
+      targetUrl = job.finalVideoUrl || job.previewUrl || job.watermarkedUrl
+      if (!targetUrl) {
+        res.status(400).json({ success: false, message: `Job ${referenceId} has no video URL` })
+        return
+      }
+    }
+
+    if (!targetUrl) {
+      res.status(400).json({ success: false, message: 'Provide videoUrl or referenceId in body' })
+      return
+    }
+
+    logger.info(`[TestWatermark] Starting on url=${targetUrl}, ref=${targetReferenceId}`)
+
+    const fakeJob = {
+      referenceId:    targetReferenceId,
+      finalVideoUrl:  '',
+      watermarkedUrl: '',
+      previewUrl:     '',
+      status:         'in-progress',
+      statusHistory:  [],
+      save:           async () => {},
+    } as any
+
+    await applyWatermarkAndAdvanceJob(fakeJob, targetUrl)
+
+    res.json({
+      success:        true,
+      referenceId:    targetReferenceId,
+      cleanUrl:       fakeJob.finalVideoUrl,
+      watermarkedUrl: fakeJob.watermarkedUrl,
+    })
+  } catch (err: any) {
+    logger.error('[TestWatermark] Error:', err)
+    res.status(500).json({ success: false, message: err?.message ?? 'Watermark test failed' })
+  }
+}
+
 export async function creatifyWebhook(req: Request, res: Response): Promise<void> {
   try {
     const payload = req.body as Record<string, unknown>
