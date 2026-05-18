@@ -43,8 +43,6 @@ async function buildWatermarkPng(text: string, opacity: number): Promise<Buffer>
   const width      = Math.ceil(maxLen * fontSize * 0.58) + padX * 2 + 20
   const height     = lines.length * lineHeight + padY * 2
 
-  const boxOpacity = Math.min(1, opacity * 0.75).toFixed(2)
-
   const svgLines = lines.map((line, i) => {
     const y = padY + (i + 1) * lineHeight - 4
     return [
@@ -56,7 +54,6 @@ async function buildWatermarkPng(text: string, opacity: number): Promise<Buffer>
   }).join('\n')
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-  <rect width="${width}" height="${height}" rx="4" fill="black" fill-opacity="${boxOpacity}"/>
   ${svgLines}
 </svg>`
 
