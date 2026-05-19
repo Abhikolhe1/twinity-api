@@ -15,10 +15,9 @@ import { aiService } from './ai.service'
 import { s3Service } from './s3.service'
 import { env } from '../config/env'
 
-// Helper: fetch statusHistory array, append entry, return updated array
 async function appendHistory(jobId: string, entry: { status: string; timestamp: string; note?: string }): Promise<Prisma.InputJsonValue> {
-  const job = await prisma.videoJob.findUnique({ where: { id: jobId }, select: { statusHistory: true } })
-  const history = (Array.isArray(job?.statusHistory) ? job!.statusHistory : []) as Prisma.InputJsonValue[]
+  const job = await prisma.videoJob.findUnique({ where: { id: jobId }, select: { status_history: true } })
+  const history = (Array.isArray(job?.status_history) ? job!.status_history : []) as Prisma.InputJsonValue[]
   return [...history, entry] as Prisma.InputJsonValue
 }
 
@@ -28,7 +27,7 @@ async function processJob(jobId: string): Promise<void> {
   const job = await prisma.videoJob.findUnique({
     where: { id: jobId },
     include: {
-      celebrity: { select: { id: true, name: true, slug: true, voiceModelId: true, thumbnailUrl: true } },
+      celebrity: { select: { id: true, name: true, slug: true, voice_model_id: true, thumbnail_url: true } },
     },
   })
 
@@ -37,7 +36,7 @@ async function processJob(jobId: string): Promise<void> {
     return
   }
   if (job.status !== 'pending') {
-    logger.warn(`[Queue] processJob: job ${job.referenceId} status=${job.status} — skipping (not pending)`)
+    logger.warn(`[Queue] processJob: job ${job.reference_id} status=${job.status} — skipping (not pending)`)
     return
   }
 
@@ -46,33 +45,33 @@ async function processJob(jobId: string): Promise<void> {
   const inProgressHistory = await appendHistory(jobId, { status: 'in-progress', timestamp: new Date().toISOString(), note: 'AI processing started' })
   await prisma.videoJob.update({
     where: { id: jobId },
-    data: { status: 'in_progress', statusHistory: inProgressHistory },
+    data: { status: 'in_progress', status_history: inProgressHistory },
   })
-  logger.info(`[Queue] Job ${job.referenceId} → in-progress`)
+  logger.info(`[Queue] Job ${job.reference_id} → in-progress`)
 
   try {
-    if (!job.voiceAudioUrl) throw new Error('No voice audio — complete a voice preview in the wizard before generating')
+    if (!job.voice_audio_url) throw new Error('No voice audio — complete a voice preview in the wizard before generating')
 
-    const voiceAudioUrl = (await s3Service.presignIfS3Short(job.voiceAudioUrl, 7200)) ?? job.voiceAudioUrl
-    logger.info(`[Queue] Job ${job.referenceId} — using preview audio: ${voiceAudioUrl}`)
+    const voiceAudioUrl = (await s3Service.presignIfS3Short(job.voice_audio_url, 7200)) ?? job.voice_audio_url
+    logger.info(`[Queue] Job ${job.reference_id} — using preview audio: ${voiceAudioUrl}`)
 
-    if (!celeb?.thumbnailUrl) throw new Error(`Celebrity ${celeb?.name} has no thumbnailUrl — upload a photo in the admin panel`)
+    if (!celeb?.thumbnail_url) throw new Error(`Celebrity ${celeb?.name} has no thumbnail_url — upload a photo in the admin panel`)
 
-    const imageUrl = await s3Service.presignIfS3Short(celeb.thumbnailUrl, 7200)
-    logger.info(`[Queue] Job ${job.referenceId} — imageUrl=${imageUrl}`)
+    const imageUrl = await s3Service.presignIfS3Short(celeb.thumbnail_url, 7200)
+    logger.info(`[Queue] Job ${job.reference_id} — imageUrl=${imageUrl}`)
 
     const callbackUrl = env.serverUrl ? `${env.serverUrl}/api/webhooks/creatify` : undefined
 
-    const backgroundImageUrl = job.backgroundImageUrl
-      ? (await s3Service.presignIfS3Short(job.backgroundImageUrl, 7200)) ?? job.backgroundImageUrl
+    const backgroundImageUrl = job.background_image_url
+      ? (await s3Service.presignIfS3Short(job.background_image_url, 7200)) ?? job.background_image_url
       : undefined
 
     const render = await aiService.creatifyAurora({
       audioUrl:           voiceAudioUrl,
       imageUrl:           imageUrl!,
-      referenceId:        job.referenceId,
+      referenceId:        job.reference_id,
       callbackUrl,
-      creatifyPrompt:     job.sceneNotes || undefined,
+      creatifyPrompt:     job.scene_notes || undefined,
       backgroundImageUrl,
     })
 
@@ -81,32 +80,32 @@ async function processJob(jobId: string): Promise<void> {
       await prisma.videoJob.update({
         where: { id: jobId },
         data: {
-          creatifyJobId:  render.jobId,
-          previewUrl:     voiceAudioUrl,
-          watermarkedUrl: voiceAudioUrl,
-          finalVideoUrl:  voiceAudioUrl,
-          status:         'review',
-          statusHistory:  reviewHistory,
+          creatify_job_id: render.jobId,
+          preview_url:     voiceAudioUrl,
+          watermarked_url: voiceAudioUrl,
+          final_video_url: voiceAudioUrl,
+          status:          'review',
+          status_history:  reviewHistory,
         },
       })
-      logger.info(`[Queue] Job ${job.referenceId} → review (stub), audio preview: ${voiceAudioUrl}`)
+      logger.info(`[Queue] Job ${job.reference_id} → review (stub), audio preview: ${voiceAudioUrl}`)
     } else {
       await prisma.videoJob.update({
         where: { id: jobId },
-        data: { creatifyJobId: render.jobId },
+        data: { creatify_job_id: render.jobId },
       })
-      logger.info(`[Queue] Job ${job.referenceId} Creatify Aurora queued → awaiting webhook (id: ${render.jobId})`)
+      logger.info(`[Queue] Job ${job.reference_id} Creatify Aurora queued → awaiting webhook (id: ${render.jobId})`)
     }
 
   } catch (err: any) {
-    logger.error(`[Queue] Job ${job.referenceId} failed:`, err)
+    logger.error(`[Queue] Job ${job.reference_id} failed:`, err)
     const failedHistory = await appendHistory(jobId, { status: 'failed', timestamp: new Date().toISOString(), note: err?.message ?? 'AI processing error' })
     await prisma.videoJob.update({
       where: { id: jobId },
       data: {
-        status:       'failed',
-        errorMessage: err?.message ?? 'AI processing error',
-        statusHistory: failedHistory,
+        status:         'failed',
+        error_message:  err?.message ?? 'AI processing error',
+        status_history: failedHistory,
       },
     })
   }

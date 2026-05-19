@@ -2,17 +2,15 @@ import { Request, Response, NextFunction } from 'express'
 import prisma from '../lib/prisma'
 import { AppError } from '../middleware/errorHandler'
 
-// Helper: append entry to statusHistory Json array
 async function appendLeadStatusHistory(
   leadId: string,
   entry: { status: string; timestamp: string; note?: string; adminId?: string }
 ): Promise<unknown> {
-  const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { statusHistory: true } })
-  const history = (Array.isArray(lead?.statusHistory) ? lead!.statusHistory : []) as unknown[]
+  const lead = await prisma.lead.findUnique({ where: { id: leadId }, select: { status_history: true } })
+  const history = (Array.isArray(lead?.status_history) ? lead!.status_history : []) as unknown[]
   return [...history, entry]
 }
 
-// Public — contact form submission
 export async function submitContactForm(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { name, email, phone, company, message, notes, productType, purpose, celebrityName } = req.body as Record<string, string>
@@ -23,12 +21,12 @@ export async function submitContactForm(req: Request, res: Response, next: NextF
         email,
         phone,
         company,
-        notes:         notes || message || '',
-        productType:   productType   || 'contact-form',
-        purpose:       purpose       || 'General Inquiry',
-        celebrityName: celebrityName || 'N/A',
-        source:        'contact_form',
-        statusHistory,
+        notes:          notes || message || '',
+        product_type:   productType   || 'contact-form',
+        purpose:        purpose       || 'General Inquiry',
+        celebrity_name: celebrityName || 'N/A',
+        source:         'contact_form',
+        status_history: statusHistory,
       },
     })
     res.status(201).json({ success: true, message: 'Inquiry submitted successfully', data: { id: lead.id } })
@@ -37,7 +35,6 @@ export async function submitContactForm(req: Request, res: Response, next: NextF
   }
 }
 
-// Admin — list all leads
 export async function adminListLeads(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { status, page = 1, limit = 20 } = req.query
@@ -48,10 +45,10 @@ export async function adminListLeads(req: Request, res: Response, next: NextFunc
     const [leads, total] = await Promise.all([
       prisma.lead.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { created_at: 'desc' },
         skip,
         take: Number(limit),
-        include: { videoJob: { select: { referenceId: true, status: true } } },
+        include: { video_job: { select: { reference_id: true, status: true } } },
       }),
       prisma.lead.count({ where }),
     ])
@@ -62,14 +59,13 @@ export async function adminListLeads(req: Request, res: Response, next: NextFunc
   }
 }
 
-// Admin — get single lead
 export async function adminGetLead(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const lead = await prisma.lead.findUnique({
       where: { id: req.params.id },
       include: {
-        user:     { select: { name: true, email: true } },
-        videoJob: { select: { referenceId: true, status: true } },
+        user:      { select: { name: true, email: true } },
+        video_job: { select: { reference_id: true, status: true } },
       },
     })
     if (!lead) throw new AppError('Lead not found', 404)
@@ -79,11 +75,12 @@ export async function adminGetLead(req: Request, res: Response, next: NextFuncti
   }
 }
 
-// Admin — update lead status
 export async function adminUpdateLeadStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { status, note, assignedTo, followUpDate } = req.body as {
-      status: string; note?: string; assignedTo?: string; followUpDate?: string
+    const { status, note, assignedTo, assigned_to, followUpDate, follow_up_date } = req.body as {
+      status: string; note?: string
+      assignedTo?: string; assigned_to?: string
+      followUpDate?: string; follow_up_date?: string
     }
 
     const lead = await prisma.lead.findUnique({ where: { id: req.params.id } })
@@ -92,10 +89,12 @@ export async function adminUpdateLeadStatus(req: Request, res: Response, next: N
     const history = await appendLeadStatusHistory(lead.id, { status, timestamp: new Date().toISOString(), note })
     const updateData: Record<string, unknown> = {
       status,
-      statusHistory: history as any,
+      status_history: history as any,
     }
-    if (assignedTo) updateData.assignedTo = assignedTo
-    if (followUpDate) updateData.followUpDate = new Date(followUpDate)
+    const assignee   = assigned_to  ?? assignedTo
+    const followDate = follow_up_date ?? followUpDate
+    if (assignee)   updateData.assigned_to  = assignee
+    if (followDate) updateData.follow_up_date = new Date(followDate)
 
     const updated = await prisma.lead.update({ where: { id: lead.id }, data: updateData })
     res.json({ success: true, data: updated })
@@ -104,22 +103,21 @@ export async function adminUpdateLeadStatus(req: Request, res: Response, next: N
   }
 }
 
-// Admin — get stats
 export async function adminLeadStats(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const [grouped, total] = await Promise.all([
       prisma.lead.groupBy({
         by: ['status'],
         _count: { status: true },
-        _sum: { estimatedValue: true },
+        _sum:   { estimated_value: true },
       }),
       prisma.lead.count(),
     ])
 
     const byStatus = grouped.map(g => ({
-      _id: g.status,
+      _id:   g.status,
       count: g._count.status,
-      value: g._sum.estimatedValue ?? 0,
+      value: g._sum.estimated_value ?? 0,
     }))
 
     res.json({ success: true, data: { byStatus, total } })

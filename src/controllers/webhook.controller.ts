@@ -2,7 +2,7 @@
  * Webhook Controller — handles inbound callbacks from Creatify Aurora.
  *
  * Creatify → /api/webhooks/creatify
- *   - status "done"   — set finalVideoUrl, advance job to 'review'
+ *   - status "done"   — set final_video_url, advance job to 'review'
  *   - status "failed" — mark job failed, notify customer
  */
 import { Request, Response } from 'express'
@@ -13,8 +13,6 @@ import { emailService } from '../services/email.service'
 import { applyWatermarkAndAdvanceJob } from '../services/watermark.service'
 import { logger } from '../config/logger'
 
-// Helper to create a job-like object that watermark service can work with
-// The watermark service calls job.save() and mutates job fields — we adapt that pattern here.
 function makeJobAdapter(jobId: string, referenceId: string, initialData: Record<string, unknown>) {
   const data: Record<string, unknown> = { ...initialData }
   return {
@@ -31,19 +29,15 @@ function makeJobAdapter(jobId: string, referenceId: string, initialData: Record<
     get statusHistory()  { return data.statusHistory  as unknown[] },
     push: (entry: unknown) => { (data.statusHistory as unknown[]).push(entry) },
     save: async () => {
-      // Fetch current statusHistory to merge (since we're accumulating locally)
-      const current = await prisma.videoJob.findUnique({ where: { id: jobId }, select: { statusHistory: true } })
-      const existing = (Array.isArray(current?.statusHistory) ? current!.statusHistory : []) as unknown[]
-      // data.statusHistory has new entries pushed onto it via the adapter
+      const current = await prisma.videoJob.findUnique({ where: { id: jobId }, select: { status_history: true } })
+      const existing = (Array.isArray(current?.status_history) ? current!.status_history : []) as unknown[]
       const newEntries = (data.statusHistory as unknown[]).slice(existing.length)
       const merged = [...existing, ...newEntries]
 
-      const updatePayload: Record<string, unknown> = {
-        statusHistory: merged,
-      }
-      if (data.finalVideoUrl  !== undefined) updatePayload.finalVideoUrl  = data.finalVideoUrl
-      if (data.watermarkedUrl !== undefined) updatePayload.watermarkedUrl = data.watermarkedUrl
-      if (data.previewUrl     !== undefined) updatePayload.previewUrl     = data.previewUrl
+      const updatePayload: Record<string, unknown> = { status_history: merged }
+      if (data.finalVideoUrl  !== undefined) updatePayload.final_video_url  = data.finalVideoUrl
+      if (data.watermarkedUrl !== undefined) updatePayload.watermarked_url  = data.watermarkedUrl
+      if (data.previewUrl     !== undefined) updatePayload.preview_url      = data.previewUrl
       if (data.status         !== undefined) {
         const s = data.status as string
         updatePayload.status = s === 'in-progress' ? 'in_progress' : s
@@ -61,12 +55,12 @@ export async function testWatermark(req: Request, res: Response): Promise<void> 
     const targetReferenceId = referenceId ?? `test-${Date.now()}`
 
     if (!targetUrl && referenceId) {
-      const job = await prisma.videoJob.findFirst({ where: { referenceId } })
+      const job = await prisma.videoJob.findFirst({ where: { reference_id: referenceId } })
       if (!job) {
         res.status(404).json({ success: false, message: `No job found for referenceId=${referenceId}` })
         return
       }
-      targetUrl = job.finalVideoUrl || job.previewUrl || job.watermarkedUrl || undefined
+      targetUrl = job.final_video_url || job.preview_url || job.watermarked_url || undefined
       if (!targetUrl) {
         res.status(400).json({ success: false, message: `Job ${referenceId} has no video URL` })
         return
@@ -110,9 +104,9 @@ export async function creatifyWebhook(req: Request, res: Response): Promise<void
     const payload = req.body as Record<string, unknown>
     logger.info(`[Webhook] Creatify raw payload: ${JSON.stringify(payload)}`)
 
-    const jobId    = (payload.id           ?? '') as string
-    const status   = (payload.status       ?? '') as string
-    const videoUrl = (payload.video_output ?? '') as string
+    const jobId    = (payload.id            ?? '') as string
+    const status   = (payload.status        ?? '') as string
+    const videoUrl = (payload.video_output  ?? '') as string
     const errorMsg = (payload.failed_reason ?? '') as string
 
     logger.info(`[Webhook] Creatify event — status=${status}, id=${jobId}, video_output=${videoUrl || '[empty]'}`)
@@ -125,7 +119,7 @@ export async function creatifyWebhook(req: Request, res: Response): Promise<void
       return
     }
 
-    const dbJob = await prisma.videoJob.findFirst({ where: { creatifyJobId: jobId } })
+    const dbJob = await prisma.videoJob.findFirst({ where: { creatify_job_id: jobId } })
     if (!dbJob) {
       logger.warn(`[Webhook] Creatify: no job found for id=${jobId}`)
       res.status(404).json({ success: false, message: 'Job not found' })
@@ -134,45 +128,43 @@ export async function creatifyWebhook(req: Request, res: Response): Promise<void
 
     if (outcome === 'success') {
       if (!videoUrl) {
-        logger.error(`[Webhook] Creatify: no video_output for job=${dbJob.referenceId} — cannot proceed`)
+        logger.error(`[Webhook] Creatify: no video_output for job=${dbJob.reference_id} — cannot proceed`)
         res.json({ success: true })
         return
       }
 
-      // Respond to Creatify immediately — watermarking can take 30-60 s
       res.json({ success: true })
 
       settingsService.get().then(({ adminEmail }) => {
         if (adminEmail) emailService.sendNewLeadNotification({ email: adminEmail } as any).catch(() => null)
       }).catch(() => null)
 
-      const jobAdapter = makeJobAdapter(dbJob.id, dbJob.referenceId, {
-        finalVideoUrl:  dbJob.finalVideoUrl  ?? '',
-        watermarkedUrl: dbJob.watermarkedUrl ?? '',
-        previewUrl:     dbJob.previewUrl     ?? '',
+      const jobAdapter = makeJobAdapter(dbJob.id, dbJob.reference_id, {
+        finalVideoUrl:  dbJob.final_video_url  ?? '',
+        watermarkedUrl: dbJob.watermarked_url  ?? '',
+        previewUrl:     dbJob.preview_url      ?? '',
         status:         dbJob.status,
-        statusHistory:  (Array.isArray(dbJob.statusHistory) ? dbJob.statusHistory : []) as unknown[],
+        statusHistory:  (Array.isArray(dbJob.status_history) ? dbJob.status_history : []) as unknown[],
       })
 
       applyWatermarkAndAdvanceJob(jobAdapter as any, videoUrl)
-        .then(() => logger.info(`[Webhook] Job ${dbJob.referenceId} → review (watermarked)`))
-        .catch(err => logger.error(`[Webhook] applyWatermarkAndAdvanceJob failed for job ${dbJob.referenceId}:`, err))
+        .then(() => logger.info(`[Webhook] Job ${dbJob.reference_id} → review (watermarked)`))
+        .catch(err => logger.error(`[Webhook] applyWatermarkAndAdvanceJob failed for job ${dbJob.reference_id}:`, err))
       return
     } else {
-      // failure path
-      const currentJob = await prisma.videoJob.findUnique({ where: { id: dbJob.id }, select: { statusHistory: true } })
-      const history = (Array.isArray(currentJob?.statusHistory) ? currentJob!.statusHistory : []) as Prisma.InputJsonValue[]
-      const errorMessage = errorMsg || 'Creatify Aurora render failed'
-      const newHistory: Prisma.InputJsonValue = [...history, { status: 'failed', timestamp: new Date().toISOString(), note: errorMessage }]
+      const currentJob = await prisma.videoJob.findUnique({ where: { id: dbJob.id }, select: { status_history: true } })
+      const history = (Array.isArray(currentJob?.status_history) ? currentJob!.status_history : []) as Prisma.InputJsonValue[]
+      const error_message = errorMsg || 'Creatify Aurora render failed'
+      const newHistory: Prisma.InputJsonValue = [...history, { status: 'failed', timestamp: new Date().toISOString(), note: error_message }]
 
       await prisma.videoJob.update({
         where: { id: dbJob.id },
-        data: { status: 'failed', errorMessage, statusHistory: newHistory },
+        data: { status: 'failed', error_message, status_history: newHistory },
       })
-      logger.warn(`[Webhook] Creatify failed: job=${dbJob.referenceId}, error=${errorMsg}`)
+      logger.warn(`[Webhook] Creatify failed: job=${dbJob.reference_id}, error=${errorMsg}`)
 
-      prisma.user.findUnique({ where: { id: dbJob.userId } }).then(user => {
-        if (user) emailService.sendJobStatusUpdate(user.email, user.name, 'failed', dbJob.referenceId).catch(() => null)
+      prisma.user.findUnique({ where: { id: dbJob.user_id } }).then(user => {
+        if (user) emailService.sendJobStatusUpdate(user.email, user.name, 'failed', dbJob.reference_id).catch(() => null)
       }).catch(() => null)
     }
 

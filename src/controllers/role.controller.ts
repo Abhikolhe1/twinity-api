@@ -6,17 +6,17 @@ import { AppError } from '../middleware/errorHandler'
 export async function listRoles(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const roles = await prisma.role.findMany({
-      orderBy: [{ isSystem: 'desc' }, { createdAt: 'desc' }],
+      orderBy: [{ is_system: 'desc' }, { created_at: 'desc' }],
       include: { creator: { select: { name: true, email: true } } },
     })
 
     const memberCounts = await prisma.admin.groupBy({
-      by: ['roleId'],
-      where: { roleId: { in: roles.map(r => r.id), not: null } },
-      _count: { roleId: true },
+      by: ['role_id'],
+      where: { role_id: { in: roles.map(r => r.id), not: null } },
+      _count: { role_id: true },
     })
     const countMap = Object.fromEntries(
-      memberCounts.filter(m => m.roleId).map(m => [m.roleId as string, m._count.roleId])
+      memberCounts.filter(m => m.role_id).map(m => [m.role_id as string, m._count.role_id])
     )
 
     const data = roles.map(r => ({
@@ -45,7 +45,7 @@ export async function createRole(req: AdminRequest, res: Response, next: NextFun
         name,
         description: description || '',
         permissions:  permissions || [],
-        createdBy:   req.adminId,
+        created_by:  req.adminId,
       },
     })
 
@@ -59,7 +59,7 @@ export async function updateRole(req: AdminRequest, res: Response, next: NextFun
   try {
     const role = await prisma.role.findUnique({ where: { id: req.params.id } })
     if (!role) throw new AppError('Role not found', 404)
-    if (role.isSystem) throw new AppError('System roles cannot be modified', 400)
+    if (role.is_system) throw new AppError('System roles cannot be modified', 400)
 
     const { name, description, permissions } = req.body
     const updateData: Record<string, unknown> = {}
@@ -80,7 +80,7 @@ export async function deleteRole(req: AdminRequest, res: Response, next: NextFun
     if (!role) throw new AppError('Role not found', 404)
     if (role.isSystem) throw new AppError('System roles cannot be deleted', 400)
 
-    const count = await prisma.admin.count({ where: { roleId: req.params.id } })
+    const count = await prisma.admin.count({ where: { role_id: req.params.id } })
     if (count > 0) {
       throw new AppError(`${count} team member(s) are assigned this role. Reassign them first.`, 400)
     }

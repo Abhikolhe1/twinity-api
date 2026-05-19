@@ -26,25 +26,22 @@ export async function requireAdmin(req: AdminRequest, res: Response, next: NextF
     const decoded = jwt.verify(token, env.adminJwtSecret) as { adminId: string; role: string }
     const admin = await prisma.admin.findUnique({
       where: { id: decoded.adminId },
-      select: { isActive: true, role: true, roleId: true },
+      select: { is_active: true, role: true, role_id: true },
     })
-    if (!admin || !admin.isActive) {
+    if (!admin || !admin.is_active) {
       res.status(401).json({ success: false, message: 'Admin account is not active' })
       return
     }
 
     req.adminId = decoded.adminId
-    // Normalise Prisma enum value (super_admin) back to the hyphenated form used in tokens
     req.adminRole = (decoded.role as string).replace('_', '-') as AdminRole
 
-    // Resolve permissions
     if (admin.role === 'super_admin') {
       req.adminPermissions = [...ALL_PERMISSIONS]
-    } else if (admin.roleId) {
-      const role = await prisma.role.findUnique({ where: { id: admin.roleId }, select: { permissions: true } })
+    } else if (admin.role_id) {
+      const role = await prisma.role.findUnique({ where: { id: admin.role_id }, select: { permissions: true } })
       req.adminPermissions = role?.permissions ?? []
     } else {
-      // Legacy fallback
       const roleStr = (admin.role as string).replace('_', '-')
       req.adminPermissions = roleStr === 'admin'
         ? ALL_PERMISSIONS.filter(p => !p.startsWith('roles') && !p.startsWith('team'))

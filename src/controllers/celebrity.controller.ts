@@ -6,7 +6,6 @@ import { aiService } from '../services/ai.service'
 import { s3Service } from '../services/s3.service'
 import { settingsService } from '../services/settings.service'
 import { logger } from '../config/logger'
-import type { Celebrity } from '@prisma/client'
 
 async function maybeProcessThumbnail(thumbnailUrl: string | undefined, processThumbnail: boolean): Promise<string | undefined> {
   if (!processThumbnail) return thumbnailUrl
@@ -37,24 +36,24 @@ async function resolveThumbnailUrl(thumbnailUrl: string | undefined, slug: strin
 }
 
 async function signDoc(doc: Record<string, unknown>): Promise<Record<string, unknown>> {
-  return { ...doc, thumbnailUrl: await s3Service.presignIfS3(doc.thumbnailUrl as string | undefined) }
+  return { ...doc, thumbnail_url: await s3Service.presignIfS3(doc.thumbnail_url as string | undefined) }
 }
 
 export async function listCelebrities(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { industry, search, featured } = req.query
-    const where: Record<string, unknown> = { isActive: true }
+    const where: Record<string, unknown> = { is_active: true }
     if (industry && industry !== 'all') where.industry = industry
-    if (featured === 'true') where.isFeatured = true
+    if (featured === 'true') where.is_featured = true
     if (search) {
       where.OR = [
-        { name: { contains: search as string, mode: 'insensitive' } },
-        { nameAr: { contains: search as string, mode: 'insensitive' } },
+        { name:    { contains: search as string, mode: 'insensitive' } },
+        { name_ar: { contains: search as string, mode: 'insensitive' } },
       ]
     }
     const raw = await prisma.celebrity.findMany({
       where,
-      orderBy: [{ isFeatured: 'desc' }, { totalOrders: 'desc' }],
+      orderBy: [{ is_featured: 'desc' }, { total_orders: 'desc' }],
     })
     const data = await Promise.all(raw.map(c => signDoc(c as unknown as Record<string, unknown>)))
     res.json({ success: true, data, total: data.length })
@@ -65,7 +64,7 @@ export async function listCelebrities(req: Request, res: Response, next: NextFun
 
 export async function getCelebrity(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const raw = await prisma.celebrity.findFirst({ where: { slug: req.params.slug, isActive: true } })
+    const raw = await prisma.celebrity.findFirst({ where: { slug: req.params.slug, is_active: true } })
     if (!raw) throw new AppError('Celebrity not found', 404)
     res.json({ success: true, data: await signDoc(raw as unknown as Record<string, unknown>) })
   } catch (err) {
@@ -79,32 +78,31 @@ export async function createCelebrity(req: Request, res: Response, next: NextFun
     const processThumbnail = Boolean(body.processThumbnail)
     delete body.processThumbnail
     const slug = body.slug || body.name?.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
-    body.thumbnailUrl = await maybeProcessThumbnail(body.thumbnailUrl, processThumbnail)
-    body.thumbnailUrl = await resolveThumbnailUrl(body.thumbnailUrl, slug)
+    body.thumbnail_url = await maybeProcessThumbnail(body.thumbnail_url ?? body.thumbnailUrl, processThumbnail)
+    body.thumbnail_url = await resolveThumbnailUrl(body.thumbnail_url, slug)
 
-    // Ensure arrays and defaults
     const celeb = await prisma.celebrity.create({
       data: {
-        name:          body.name,
-        nameAr:        body.nameAr,
+        name:               body.name,
+        name_ar:            body.name_ar ?? body.nameAr,
         slug,
-        industry:      body.industry,
-        nationality:   body.nationality,
-        nationalityAr: body.nationalityAr,
-        languages:     Array.isArray(body.languages) ? body.languages : [],
-        tags:          Array.isArray(body.tags) ? body.tags : [],
-        tagsAr:        Array.isArray(body.tagsAr) ? body.tagsAr : [],
-        bio:           body.bio,
-        bioAr:         body.bioAr,
-        avatarColor:   body.avatarColor,
-        initials:      body.initials,
-        thumbnailUrl:  body.thumbnailUrl,
-        voiceModelId:  body.voiceModelId,
-        trainingAudioUrl: body.trainingAudioUrl,
-        isActive:      body.isActive ?? true,
-        isFeatured:    body.isFeatured ?? false,
-        priceRange:    body.priceRange ?? undefined,
-        totalOrders:   body.totalOrders ?? 0,
+        industry:           body.industry,
+        nationality:        body.nationality,
+        nationality_ar:     body.nationality_ar ?? body.nationalityAr,
+        languages:          Array.isArray(body.languages) ? body.languages : [],
+        tags:               Array.isArray(body.tags) ? body.tags : [],
+        tags_ar:            Array.isArray(body.tags_ar ?? body.tagsAr) ? (body.tags_ar ?? body.tagsAr) : [],
+        bio:                body.bio,
+        bio_ar:             body.bio_ar ?? body.bioAr,
+        avatar_color:       body.avatar_color ?? body.avatarColor,
+        initials:           body.initials,
+        thumbnail_url:      body.thumbnail_url,
+        voice_model_id:     body.voice_model_id ?? body.voiceModelId,
+        training_audio_url: body.training_audio_url ?? body.trainingAudioUrl,
+        is_active:          body.is_active ?? body.isActive ?? true,
+        is_featured:        body.is_featured ?? body.isFeatured ?? false,
+        price_range:        body.price_range ?? body.priceRange ?? undefined,
+        total_orders:       body.total_orders ?? body.totalOrders ?? 0,
       },
     })
     res.status(201).json({ success: true, data: await signDoc(celeb as unknown as Record<string, unknown>) })
@@ -120,19 +118,33 @@ export async function updateCelebrity(req: Request, res: Response, next: NextFun
     const body = { ...req.body }
     const processThumbnail = Boolean(body.processThumbnail)
     delete body.processThumbnail
-    body.thumbnailUrl = await maybeProcessThumbnail(body.thumbnailUrl, processThumbnail)
-    body.thumbnailUrl = await resolveThumbnailUrl(body.thumbnailUrl, existing.slug)
+    const rawThumb = body.thumbnail_url ?? body.thumbnailUrl
+    const resolvedThumb = await resolveThumbnailUrl(
+      await maybeProcessThumbnail(rawThumb, processThumbnail),
+      existing.slug
+    )
 
-    // Build update data — only include fields that were sent
     const updateData: Record<string, unknown> = {}
-    const allowedFields = [
-      'name','nameAr','industry','nationality','nationalityAr','languages','tags','tagsAr',
-      'bio','bioAr','avatarColor','initials','thumbnailUrl','voiceModelId','trainingAudioUrl',
-      'isActive','isFeatured','priceRange','totalOrders',
-    ]
-    for (const field of allowedFields) {
-      if (field in body) updateData[field] = body[field]
+    const fieldMap: Record<string, string> = {
+      name: 'name', nameAr: 'name_ar', name_ar: 'name_ar',
+      industry: 'industry', nationality: 'nationality',
+      nationalityAr: 'nationality_ar', nationality_ar: 'nationality_ar',
+      languages: 'languages', tags: 'tags',
+      tagsAr: 'tags_ar', tags_ar: 'tags_ar',
+      bio: 'bio', bioAr: 'bio_ar', bio_ar: 'bio_ar',
+      avatarColor: 'avatar_color', avatar_color: 'avatar_color',
+      initials: 'initials',
+      voiceModelId: 'voice_model_id', voice_model_id: 'voice_model_id',
+      trainingAudioUrl: 'training_audio_url', training_audio_url: 'training_audio_url',
+      isActive: 'is_active', is_active: 'is_active',
+      isFeatured: 'is_featured', is_featured: 'is_featured',
+      priceRange: 'price_range', price_range: 'price_range',
+      totalOrders: 'total_orders', total_orders: 'total_orders',
     }
+    for (const [key, dbKey] of Object.entries(fieldMap)) {
+      if (key in body) updateData[dbKey] = body[key]
+    }
+    if (resolvedThumb !== undefined) updateData.thumbnail_url = resolvedThumb
 
     const celeb = await prisma.celebrity.update({
       where: { id: req.params.id },
@@ -150,12 +162,12 @@ export async function toggleCelebrityStatus(req: Request, res: Response, next: N
     if (!existing) throw new AppError('Celebrity not found', 404)
     const celeb = await prisma.celebrity.update({
       where: { id: req.params.id },
-      data: { isActive: !existing.isActive },
+      data: { is_active: !existing.is_active },
     })
     res.json({
       success: true,
       data: await signDoc(celeb as unknown as Record<string, unknown>),
-      message: `Celebrity ${celeb.isActive ? 'activated' : 'deactivated'}`,
+      message: `Celebrity ${celeb.is_active ? 'activated' : 'deactivated'}`,
     })
   } catch (err) {
     next(err)
@@ -186,7 +198,7 @@ export async function cloneCelebrityVoice(req: Request, res: Response, next: Nex
     }
 
     const language = (req.body.language as string | undefined)?.trim() || 'en'
-    const existingVoiceId = celeb.voiceModelId || undefined
+    const existingVoiceId = celeb.voice_model_id || undefined
     const action = existingVoiceId ? `editing existing voice ${existingVoiceId}` : 'creating new voice'
     logger.info(`[Celebrity] Cloning voice for: ${celeb.name}, ${action}, files=${audioFiles.length}, language=${language}`)
 
@@ -199,7 +211,7 @@ export async function cloneCelebrityVoice(req: Request, res: Response, next: Nex
 
     await prisma.celebrity.update({
       where: { id: req.params.id },
-      data: { voiceModelId: voiceId },
+      data: { voice_model_id: voiceId },
     })
 
     res.json({

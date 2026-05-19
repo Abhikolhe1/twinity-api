@@ -8,7 +8,6 @@ import { emailService } from '../services/email.service'
 import { s3Service } from '../services/s3.service'
 import { env } from '../config/env'
 
-// Admin login
 export async function adminLogin(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { email, password } = req.body
@@ -16,9 +15,9 @@ export async function adminLogin(req: Request, res: Response, next: NextFunction
     if (!admin || !(await bcrypt.compare(password, admin.password))) {
       throw new AppError('Invalid credentials', 401)
     }
-    if (!admin.isActive) throw new AppError('Admin account is not active', 403)
+    if (!admin.is_active) throw new AppError('Admin account is not active', 403)
 
-    await prisma.admin.update({ where: { id: admin.id }, data: { lastLoginAt: new Date() } })
+    await prisma.admin.update({ where: { id: admin.id }, data: { last_login_at: new Date() } })
 
     const token = jwt.sign(
       { adminId: admin.id, role: admin.role },
@@ -36,7 +35,6 @@ export async function adminLogin(req: Request, res: Response, next: NextFunction
   }
 }
 
-// Dashboard stats
 export async function getDashboardStats(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const [totalUsers, totalVideos, totalLeads, totalCelebrities,
@@ -44,28 +42,28 @@ export async function getDashboardStats(req: Request, res: Response, next: NextF
       prisma.user.count(),
       prisma.videoJob.count(),
       prisma.lead.count(),
-      prisma.celebrity.count({ where: { isActive: true } }),
+      prisma.celebrity.count({ where: { is_active: true } }),
       prisma.videoJob.count({ where: { status: 'pending' } }),
       prisma.lead.count({ where: { status: { in: ['new', 'contacted', 'negotiating'] } } }),
       prisma.videoJob.findMany({
-        orderBy: { createdAt: 'desc' },
+        orderBy: { created_at: 'desc' },
         take: 5,
         include: {
-          user: { select: { name: true, email: true } },
+          user:      { select: { name: true, email: true } },
           celebrity: { select: { name: true, initials: true } },
         },
       }),
       prisma.lead.findMany({
-        orderBy: { createdAt: 'desc' },
+        orderBy: { created_at: 'desc' },
         take: 5,
       }),
     ])
 
     const revenueAgg = await prisma.lead.aggregate({
       where: { status: 'paid' },
-      _sum: { estimatedValue: true },
+      _sum: { estimated_value: true },
     })
-    const totalRevenue = revenueAgg._sum.estimatedValue ?? 0
+    const totalRevenue = revenueAgg._sum.estimated_value ?? 0
 
     res.json({
       success: true,
@@ -80,7 +78,6 @@ export async function getDashboardStats(req: Request, res: Response, next: NextF
   }
 }
 
-// User management
 export async function listUsers(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { status, search, page = 1, limit = 20 } = req.query
@@ -88,7 +85,7 @@ export async function listUsers(req: Request, res: Response, next: NextFunction)
     if (status) where.status = status
     if (search) {
       where.OR = [
-        { name: { contains: search as string, mode: 'insensitive' } },
+        { name:  { contains: search as string, mode: 'insensitive' } },
         { email: { contains: search as string, mode: 'insensitive' } },
       ]
     }
@@ -96,14 +93,14 @@ export async function listUsers(req: Request, res: Response, next: NextFunction)
     const [users, total] = await Promise.all([
       prisma.user.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { created_at: 'desc' },
         skip,
         take: Number(limit),
         select: {
           id: true, name: true, email: true, phone: true, company: true,
-          accountType: true, authProvider: true, hasEmailPassword: true,
-          isEmailVerified: true, status: true, lastLoginAt: true,
-          createdAt: true, updatedAt: true,
+          account_type: true, auth_provider: true, has_email_password: true,
+          is_email_verified: true, status: true, last_login_at: true,
+          created_at: true, updated_at: true,
         },
       }),
       prisma.user.count({ where }),
@@ -114,7 +111,6 @@ export async function listUsers(req: Request, res: Response, next: NextFunction)
   }
 }
 
-// Admin — list all celebrities (including inactive)
 export async function adminListCelebrities(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { industry, search, page = 1, limit = 50 } = req.query
@@ -122,15 +118,15 @@ export async function adminListCelebrities(req: Request, res: Response, next: Ne
     if (industry && industry !== 'all') where.industry = industry
     if (search) {
       where.OR = [
-        { name: { contains: search as string, mode: 'insensitive' } },
-        { nameAr: { contains: search as string, mode: 'insensitive' } },
+        { name:    { contains: search as string, mode: 'insensitive' } },
+        { name_ar: { contains: search as string, mode: 'insensitive' } },
       ]
     }
     const skip = (Number(page) - 1) * Number(limit)
     const [raw, total] = await Promise.all([
       prisma.celebrity.findMany({
         where,
-        orderBy: [{ isFeatured: 'desc' }, { isActive: 'desc' }, { totalOrders: 'desc' }],
+        orderBy: [{ is_featured: 'desc' }, { is_active: 'desc' }, { total_orders: 'desc' }],
         skip,
         take: Number(limit),
       }),
@@ -138,7 +134,7 @@ export async function adminListCelebrities(req: Request, res: Response, next: Ne
     ])
     const data = await Promise.all(raw.map(async c => ({
       ...c,
-      thumbnailUrl: await s3Service.presignIfS3(c.thumbnailUrl ?? undefined),
+      thumbnail_url: await s3Service.presignIfS3(c.thumbnail_url ?? undefined),
     })))
     res.json({ success: true, data, total, page: Number(page), pages: Math.ceil(total / Number(limit)) })
   } catch (err) {
@@ -146,7 +142,6 @@ export async function adminListCelebrities(req: Request, res: Response, next: Ne
   }
 }
 
-// Admin forgot password
 export async function adminForgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { email } = req.body
@@ -156,8 +151,8 @@ export async function adminForgotPassword(req: Request, res: Response, next: Nex
       await prisma.admin.update({
         where: { id: admin.id },
         data: {
-          passwordResetToken: resetToken,
-          passwordResetExpires: new Date(Date.now() + 60 * 60 * 1000),
+          password_reset_token:   resetToken,
+          password_reset_expires: new Date(Date.now() + 60 * 60 * 1000),
         },
       })
       emailService.sendAdminPasswordResetEmail(email, admin.name, resetToken).catch(() => null)
@@ -168,15 +163,14 @@ export async function adminForgotPassword(req: Request, res: Response, next: Nex
   }
 }
 
-// Admin reset password
 export async function adminResetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { token } = req.params
     const { password } = req.body
     const admin = await prisma.admin.findFirst({
       where: {
-        passwordResetToken: token,
-        passwordResetExpires: { gt: new Date() },
+        password_reset_token:   token,
+        password_reset_expires: { gt: new Date() },
       },
     })
     if (!admin) throw new AppError('Invalid or expired reset token', 400)
@@ -185,9 +179,9 @@ export async function adminResetPassword(req: Request, res: Response, next: Next
     await prisma.admin.update({
       where: { id: admin.id },
       data: {
-        password: hashedPassword,
-        passwordResetToken: null,
-        passwordResetExpires: null,
+        password:               hashedPassword,
+        password_reset_token:   null,
+        password_reset_expires: null,
       },
     })
 
@@ -205,7 +199,7 @@ export async function updateUserStatus(req: Request, res: Response, next: NextFu
       data: { status },
       select: {
         id: true, name: true, email: true, status: true,
-        createdAt: true, updatedAt: true,
+        created_at: true, updated_at: true,
       },
     })
     res.json({ success: true, data: user, message: `User ${status}` })

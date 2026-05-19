@@ -1,15 +1,12 @@
 import { Request, Response } from 'express'
 import prisma from '../lib/prisma'
-import { AppError } from '../middleware/errorHandler'
-
-// ── Public ───────────────────────────────────────────────────────────────────
 
 export async function listTemplates(req: Request, res: Response): Promise<void> {
   try {
     const { productType } = req.query
-    const where: Record<string, unknown> = { isActive: true }
+    const where: Record<string, unknown> = { is_active: true }
     if (productType && typeof productType === 'string') {
-      where.productTypes = { has: productType }
+      where.product_types = { has: productType }
     }
     const templates = await prisma.template.findMany({ where, orderBy: { purpose: 'asc' } })
     res.json({ success: true, data: templates, total: templates.length })
@@ -18,16 +15,14 @@ export async function listTemplates(req: Request, res: Response): Promise<void> 
   }
 }
 
-// ── Admin ────────────────────────────────────────────────────────────────────
-
 export async function adminListTemplates(req: Request, res: Response): Promise<void> {
   try {
     const { search, productType, status } = req.query
     const where: Record<string, unknown> = {}
 
-    if (status === 'active')   where.isActive = true
-    if (status === 'inactive') where.isActive = false
-    if (productType && productType !== 'all') where.productTypes = { has: productType as string }
+    if (status === 'active')   where.is_active = true
+    if (status === 'inactive') where.is_active = false
+    if (productType && productType !== 'all') where.product_types = { has: productType as string }
 
     if (search && typeof search === 'string') {
       where.OR = [
@@ -48,17 +43,17 @@ export async function createTemplate(req: Request, res: Response): Promise<void>
     const body = req.body
     const template = await prisma.template.create({
       data: {
-        name:           body.name,
-        nameAr:         body.nameAr,
-        description:    body.description,
-        descriptionAr:  body.descriptionAr,
-        purpose:        body.purpose,
-        purposeAr:      body.purposeAr,
-        sampleScript:   body.sampleScript,
-        sampleScriptAr: body.sampleScriptAr,
-        productTypes:   Array.isArray(body.productTypes) ? body.productTypes : [],
-        duration:       body.duration || '30s',
-        isActive:       body.isActive ?? true,
+        name:             body.name,
+        name_ar:          body.name_ar          ?? body.nameAr,
+        description:      body.description,
+        description_ar:   body.description_ar   ?? body.descriptionAr,
+        purpose:          body.purpose,
+        purpose_ar:       body.purpose_ar        ?? body.purposeAr,
+        sample_script:    body.sample_script     ?? body.sampleScript,
+        sample_script_ar: body.sample_script_ar  ?? body.sampleScriptAr,
+        product_types:    Array.isArray(body.product_types ?? body.productTypes) ? (body.product_types ?? body.productTypes) : [],
+        duration:         body.duration || '30s',
+        is_active:        body.is_active ?? body.isActive ?? true,
       },
     })
     res.status(201).json({ success: true, data: template })
@@ -76,10 +71,18 @@ export async function updateTemplate(req: Request, res: Response): Promise<void>
     }
     const body = req.body
     const updateData: Record<string, unknown> = {}
-    const fields = ['name','nameAr','description','descriptionAr','purpose','purposeAr',
-                    'sampleScript','sampleScriptAr','productTypes','duration','isActive']
-    for (const f of fields) {
-      if (f in body) updateData[f] = body[f]
+    const fieldMap: Record<string, string> = {
+      name: 'name', nameAr: 'name_ar', name_ar: 'name_ar',
+      description: 'description', descriptionAr: 'description_ar', description_ar: 'description_ar',
+      purpose: 'purpose', purposeAr: 'purpose_ar', purpose_ar: 'purpose_ar',
+      sampleScript: 'sample_script', sample_script: 'sample_script',
+      sampleScriptAr: 'sample_script_ar', sample_script_ar: 'sample_script_ar',
+      productTypes: 'product_types', product_types: 'product_types',
+      duration: 'duration',
+      isActive: 'is_active', is_active: 'is_active',
+    }
+    for (const [key, dbKey] of Object.entries(fieldMap)) {
+      if (key in body) updateData[dbKey] = body[key]
     }
     const updated = await prisma.template.update({ where: { id: req.params.id }, data: updateData })
     res.json({ success: true, data: updated })
@@ -97,12 +100,12 @@ export async function toggleTemplateStatus(req: Request, res: Response): Promise
     }
     const updated = await prisma.template.update({
       where: { id: req.params.id },
-      data: { isActive: !template.isActive },
+      data: { is_active: !template.is_active },
     })
     res.json({
       success: true,
       data: updated,
-      message: `Template ${updated.isActive ? 'activated' : 'deactivated'}`,
+      message: `Template ${updated.is_active ? 'activated' : 'deactivated'}`,
     })
   } catch (err: any) {
     res.status(500).json({ success: false, message: err.message })

@@ -29,11 +29,11 @@ export async function register(req: Request, res: Response, next: NextFunction):
         password: hashedPassword,
         phone,
         company,
-        accountType: ['individual', 'influencer', 'agency'].includes(accountType) ? accountType : 'individual',
-        authProvider: 'email',
-        hasEmailPassword: true,
-        emailVerificationToken: verificationToken,
-        status: 'pending',
+        account_type:             ['individual', 'influencer', 'agency'].includes(accountType) ? accountType : 'individual',
+        auth_provider:            'email',
+        has_email_password:       true,
+        email_verification_token: verificationToken,
+        status:                   'pending',
       },
     })
 
@@ -56,27 +56,23 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
     const { email, password } = req.body
     const user = await prisma.user.findUnique({ where: { email }, select: {
       id: true, name: true, email: true, password: true, status: true,
-      authProvider: true, hasEmailPassword: true, isEmailVerified: true,
+      auth_provider: true, has_email_password: true, is_email_verified: true,
     }})
     if (!user || !(await bcrypt.compare(password, user.password))) {
       throw new AppError('Invalid email or password', 401)
     }
     if (user.status === 'blocked') throw new AppError('Account has been blocked', 403)
-    if (user.authProvider === 'email' && !user.hasEmailPassword) {
-      throw new AppError('This account uses Google Sign-In. Please use the Google button to sign in.', 403)
-    }
-    // also handle google-only accounts
-    if (user.authProvider === 'google' && !user.hasEmailPassword) {
+    if (user.auth_provider === 'google' && !user.has_email_password) {
       throw new AppError('This account uses Google Sign-In. Please use the Google button to sign in.', 403)
     }
 
-    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
+    await prisma.user.update({ where: { id: user.id }, data: { last_login_at: new Date() } })
 
     const token = signToken(user.id, user.email)
     res.json({
       success: true,
       token,
-      user: { id: user.id, name: user.name, email: user.email, status: user.status, isEmailVerified: user.isEmailVerified },
+      user: { id: user.id, name: user.name, email: user.email, status: user.status, isEmailVerified: user.is_email_verified },
     })
   } catch (err) {
     next(err)
@@ -86,15 +82,15 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
 export async function verifyEmail(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { token } = req.params
-    const user = await prisma.user.findFirst({ where: { emailVerificationToken: token } })
+    const user = await prisma.user.findFirst({ where: { email_verification_token: token } })
     if (!user) throw new AppError('Invalid or expired verification token', 400)
 
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        isEmailVerified: true,
-        status: 'active',
-        emailVerificationToken: null,
+        is_email_verified:        true,
+        status:                   'active',
+        email_verification_token: null,
       },
     })
 
@@ -114,8 +110,8 @@ export async function forgotPassword(req: Request, res: Response, next: NextFunc
       await prisma.user.update({
         where: { id: user.id },
         data: {
-          passwordResetToken: resetToken,
-          passwordResetExpires: new Date(Date.now() + 60 * 60 * 1000),
+          password_reset_token:   resetToken,
+          password_reset_expires: new Date(Date.now() + 60 * 60 * 1000),
         },
       })
       emailService.sendPasswordResetEmail(email, user.name, resetToken).catch(() => null)
@@ -135,8 +131,8 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
     const { password } = req.body
     const user = await prisma.user.findFirst({
       where: {
-        passwordResetToken: token,
-        passwordResetExpires: { gt: new Date() },
+        password_reset_token:   token,
+        password_reset_expires: { gt: new Date() },
       },
     })
     if (!user) throw new AppError('Invalid or expired reset token', 400)
@@ -145,9 +141,9 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        password: hashedPassword,
-        passwordResetToken: null,
-        passwordResetExpires: null,
+        password:               hashedPassword,
+        password_reset_token:   null,
+        password_reset_expires: null,
       },
     })
 
@@ -173,26 +169,26 @@ export async function googleAuth(req: Request, res: Response, next: NextFunction
       const hashedPassword = await bcrypt.hash(uuidv4(), 12)
       user = await prisma.user.create({
         data: {
-          name: googleUser.name || googleUser.email.split('@')[0],
-          email: googleUser.email,
-          password: hashedPassword,
-          authProvider: 'google',
-          hasEmailPassword: false,
-          isEmailVerified: true,
-          status: 'active',
-          avatarUrl: googleUser.picture,
+          name:               googleUser.name || googleUser.email.split('@')[0],
+          email:              googleUser.email,
+          password:           hashedPassword,
+          auth_provider:      'google',
+          has_email_password: false,
+          is_email_verified:  true,
+          status:             'active',
+          avatar_url:         googleUser.picture,
         },
       })
     } else {
-      if (user.authProvider === 'email') {
+      if (user.auth_provider === 'email') {
         throw new AppError('This email is registered with email & password. Please sign in with your email and password.', 403)
       }
       if (user.status === 'blocked') throw new AppError('Account has been blocked', 403)
       await prisma.user.update({
         where: { id: user.id },
         data: {
-          lastLoginAt: new Date(),
-          ...(googleUser.picture && !user.avatarUrl ? { avatarUrl: googleUser.picture } : {}),
+          last_login_at: new Date(),
+          ...(googleUser.picture && !user.avatar_url ? { avatar_url: googleUser.picture } : {}),
         },
       })
       user = await prisma.user.findUnique({ where: { id: user.id } }) as typeof user
@@ -202,7 +198,7 @@ export async function googleAuth(req: Request, res: Response, next: NextFunction
     res.json({
       success: true,
       token,
-      user: { id: user!.id, name: user!.name, email: user!.email, status: user!.status, isEmailVerified: user!.isEmailVerified },
+      user: { id: user!.id, name: user!.name, email: user!.email, status: user!.status, isEmailVerified: user!.is_email_verified },
     })
   } catch (err) {
     next(err)
@@ -215,9 +211,9 @@ export async function getMe(req: AuthRequest, res: Response, next: NextFunction)
       where: { id: req.userId },
       select: {
         id: true, name: true, email: true, phone: true, company: true,
-        avatarUrl: true, accountType: true, authProvider: true,
-        hasEmailPassword: true, isEmailVerified: true, status: true,
-        lastLoginAt: true, createdAt: true, updatedAt: true,
+        avatar_url: true, account_type: true, auth_provider: true,
+        has_email_password: true, is_email_verified: true, status: true,
+        last_login_at: true, created_at: true, updated_at: true,
       },
     })
     if (!user) throw new AppError('User not found', 404)
@@ -240,7 +236,7 @@ export async function setPassword(req: AuthRequest, res: Response, next: NextFun
     const hashedPassword = await bcrypt.hash(password, 12)
     await prisma.user.update({
       where: { id: req.userId },
-      data: { password: hashedPassword, hasEmailPassword: true },
+      data: { password: hashedPassword, has_email_password: true },
     })
 
     res.json({ success: true, message: 'Password set successfully. You can now sign in with email and password.' })
@@ -255,7 +251,7 @@ export async function updateProfile(req: AuthRequest, res: Response, next: NextF
 
     const data: Record<string, unknown> = {}
     if (name && typeof name === 'string') data.name = name.trim()
-    if (avatarUrl !== undefined) data.avatarUrl = avatarUrl
+    if (avatarUrl !== undefined) data.avatar_url = avatarUrl
 
     if (Object.keys(data).length === 0) {
       res.json({ success: true, message: 'Nothing to update' })
@@ -267,9 +263,9 @@ export async function updateProfile(req: AuthRequest, res: Response, next: NextF
       data,
       select: {
         id: true, name: true, email: true, phone: true, company: true,
-        avatarUrl: true, accountType: true, authProvider: true,
-        hasEmailPassword: true, isEmailVerified: true, status: true,
-        lastLoginAt: true, createdAt: true, updatedAt: true,
+        avatar_url: true, account_type: true, auth_provider: true,
+        has_email_password: true, is_email_verified: true, status: true,
+        last_login_at: true, created_at: true, updated_at: true,
       },
     })
 

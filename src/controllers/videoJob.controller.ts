@@ -11,10 +11,10 @@ import type { VideoJobStatus } from '../models/types'
 
 async function signJobThumbnail(job: Record<string, unknown>): Promise<Record<string, unknown>> {
   const celeb = job.celebrity as Record<string, unknown> | undefined
-  if (!celeb?.thumbnailUrl) return job
+  if (!celeb?.thumbnail_url) return job
   return {
     ...job,
-    celebrity: { ...celeb, thumbnailUrl: await s3Service.presignIfS3(celeb.thumbnailUrl as string) },
+    celebrity: { ...celeb, thumbnail_url: await s3Service.presignIfS3(celeb.thumbnail_url as string) },
   }
 }
 
@@ -25,13 +25,12 @@ function generateRef(): string {
   return `TWN-${year}-${seq}`
 }
 
-// Helper: append entry to a Json statusHistory array (fetch-then-update pattern)
 async function appendStatusHistory(
   jobId: string,
   entry: { status: string; timestamp: string; note?: string }
 ): Promise<unknown> {
-  const job = await prisma.videoJob.findUnique({ where: { id: jobId }, select: { statusHistory: true } })
-  const history = (Array.isArray(job?.statusHistory) ? job!.statusHistory : []) as unknown[]
+  const job = await prisma.videoJob.findUnique({ where: { id: jobId }, select: { status_history: true } })
+  const history = (Array.isArray(job?.status_history) ? job!.status_history : []) as unknown[]
   return [...history, entry]
 }
 
@@ -45,12 +44,11 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
     if (!voiceAudioUrl) throw new AppError('voiceAudioUrl is required — complete a voice preview before submitting', 400)
 
     const celeb = await prisma.celebrity.findUnique({ where: { id: celebrityId } })
-    if (!celeb || !celeb.isActive) throw new AppError('Celebrity not found or inactive', 404)
+    if (!celeb || !celeb.is_active) throw new AppError('Celebrity not found or inactive', 404)
 
-    // Check script against blocked words
     if (script) {
       const settings = await prisma.settings.findUnique({ where: { key: 'default' } })
-      const blockedWords: string[] = settings?.blockedWords ?? []
+      const blockedWords: string[] = settings?.blocked_words ?? []
       const scriptLower = script.toLowerCase()
       const found = blockedWords.filter((word: string) => {
         const regex = new RegExp(`\\b${word.toLowerCase()}\\b`)
@@ -59,8 +57,7 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
       if (found.length > 0) throw new AppError(`Script contains prohibited content: ${found.join(', ')}`, 422)
     }
 
-    // Estimate price from priceRange Json
-    const priceRange = celeb.priceRange as Record<string, { min: number; max: number }>
+    const priceRange = celeb.price_range as Record<string, { min: number; max: number }>
     const range = priceRange?.[productType as string]
     const estimatedPrice = range ? Math.floor((range.min + range.max) / 2) : 0
 
@@ -68,36 +65,34 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
 
     const job = await prisma.videoJob.create({
       data: {
-        referenceId: generateRef(),
-        userId: req.userId!,
-        celebrityId,
-        productType,
+        reference_id:          generateRef(),
+        user_id:               req.userId!,
+        celebrity_id:          celebrityId,
+        product_type:          productType,
         purpose,
-        templateId,
+        template_id:           templateId,
         script,
         tone,
-        duration:    duration    || '30s',
-        aspectRatio: aspectRatio || '16:9',
-        resolution:  resolution  || '1080p',
-        channels:    channels    || [],
-        estimatedPrice,
-        statusHistory,
-        propImages:          Array.isArray(propImages) && propImages.length ? propImages : [],
-        sceneNotes:          sceneNotes         || undefined,
-        backgroundImageUrl:  backgroundImageUrl || undefined,
-        voiceModel:          voiceModel         || undefined,
-        voiceSpeed:          voiceSpeed != null ? Number(voiceSpeed) : undefined,
-        voiceChangeEnabled:  voiceChangeEnabled === true || voiceChangeEnabled === 'true' || false,
-        voiceChangeSourceUrl: voiceChangeSourceUrl || undefined,
-        voiceAudioUrl:       voiceAudioUrl      || undefined,
-        audioDuration:       audioDuration != null ? Number(audioDuration) : undefined,
+        duration:              duration    || '30s',
+        aspect_ratio:          aspectRatio || '16:9',
+        resolution:            resolution  || '1080p',
+        channels:              channels    || [],
+        estimated_price:       estimatedPrice,
+        status_history:        statusHistory,
+        prop_images:           Array.isArray(propImages) && propImages.length ? propImages : [],
+        scene_notes:           sceneNotes          || undefined,
+        background_image_url:  backgroundImageUrl  || undefined,
+        voice_model:           voiceModel          || undefined,
+        voice_speed:           voiceSpeed != null ? Number(voiceSpeed) : undefined,
+        voice_change_enabled:  voiceChangeEnabled === true || voiceChangeEnabled === 'true' || false,
+        voice_change_source_url: voiceChangeSourceUrl || undefined,
+        voice_audio_url:       voiceAudioUrl       || undefined,
+        audio_duration:        audioDuration != null ? Number(audioDuration) : undefined,
       },
     })
 
-    // Increment celebrity order count
-    await prisma.celebrity.update({ where: { id: celebrityId }, data: { totalOrders: { increment: 1 } } })
+    await prisma.celebrity.update({ where: { id: celebrityId }, data: { total_orders: { increment: 1 } } })
 
-    // Dispatch to queue (non-blocking)
     await queueService.dispatchVideoJob(job.id)
 
     res.status(201).json({ success: true, data: job })
@@ -115,8 +110,8 @@ export async function previewVoice(req: AuthRequest, res: Response, next: NextFu
     if (!isVoiceChange && !script?.trim()) throw new AppError('script is required when not using voice change', 400)
 
     const celeb = await prisma.celebrity.findUnique({ where: { id: celebrityId } })
-    if (!celeb || !celeb.isActive) throw new AppError('Celebrity not found or inactive', 404)
-    if (!celeb.voiceModelId) throw new AppError('Celebrity has no voice model configured', 400)
+    if (!celeb || !celeb.is_active) throw new AppError('Celebrity not found or inactive', 404)
+    if (!celeb.voice_model_id) throw new AppError('Celebrity has no voice model configured', 400)
 
     const speed = voiceSpeed != null ? Number(voiceSpeed) : undefined
     let audioUrl: string
@@ -127,7 +122,7 @@ export async function previewVoice(req: AuthRequest, res: Response, next: NextFu
       if (!srcRes.ok) throw new AppError('Failed to fetch source audio', 400)
       const srcBuffer = Buffer.from(await srcRes.arrayBuffer())
       const result = await aiService.changeVoice({
-        targetVoiceId: celeb.voiceModelId,
+        targetVoiceId: celeb.voice_model_id,
         audioBuffer:   srcBuffer,
         audioMimeType: srcRes.headers.get('content-type') || 'audio/mpeg',
         celebSlug:     celeb.slug,
@@ -141,7 +136,7 @@ export async function previewVoice(req: AuthRequest, res: Response, next: NextFu
         ? 'eleven_v3'
         : (voiceModel as ElevenLabsTTSModel | undefined) ?? 'eleven_v3'
       const result = await aiService.generateVoice(
-        celeb.voiceModelId,
+        celeb.voice_model_id,
         String(script),
         celeb.slug,
         { model: safeTTSModel, speed },
@@ -160,14 +155,12 @@ export async function getMyStats(req: AuthRequest, res: Response, next: NextFunc
   try {
     const grouped = await prisma.videoJob.groupBy({
       by: ['status'],
-      where: { userId: req.userId },
+      where: { user_id: req.userId },
       _count: { status: true },
     })
     const stats: Record<string, number> = { all: 0, pending: 0, 'in-progress': 0, review: 0, delivered: 0, cancelled: 0, failed: 0 }
     for (const row of grouped) {
-      // Prisma enum value is in_progress but DB/JSON representation is 'in-progress'
       const rawStatus = row.status as string
-      // Convert Prisma enum name back to the hyphenated string used in stats keys
       const s = rawStatus === 'in_progress' ? 'in-progress' : rawStatus
       if (s in stats) stats[s] = row._count.status
       stats.all += row._count.status
@@ -181,9 +174,8 @@ export async function getMyStats(req: AuthRequest, res: Response, next: NextFunc
 export async function getMyJobs(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { status, page = '1', limit = '12' } = req.query
-    const where: Record<string, unknown> = { userId: req.userId }
+    const where: Record<string, unknown> = { user_id: req.userId }
     if (status && status !== 'all') {
-      // Convert 'in-progress' query param to Prisma enum value 'in_progress'
       where.status = (status as string) === 'in-progress' ? 'in_progress' : status
     }
 
@@ -195,9 +187,9 @@ export async function getMyJobs(req: AuthRequest, res: Response, next: NextFunct
       prisma.videoJob.findMany({
         where,
         include: {
-          celebrity: { select: { name: true, nameAr: true, initials: true, avatarColor: true, thumbnailUrl: true } },
+          celebrity: { select: { name: true, name_ar: true, initials: true, avatar_color: true, thumbnail_url: true } },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { created_at: 'desc' },
         skip,
         take: limitNum,
       }),
@@ -214,9 +206,9 @@ export async function getMyJobs(req: AuthRequest, res: Response, next: NextFunct
 export async function getJob(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const raw = await prisma.videoJob.findFirst({
-      where: { referenceId: req.params.referenceId, userId: req.userId },
+      where: { reference_id: req.params.referenceId, user_id: req.userId },
       include: {
-        celebrity: { select: { name: true, nameAr: true, initials: true, avatarColor: true, thumbnailUrl: true } },
+        celebrity: { select: { name: true, name_ar: true, initials: true, avatar_color: true, thumbnail_url: true } },
       },
     })
     if (!raw) throw new AppError('Job not found', 404)
@@ -232,7 +224,7 @@ export async function submitBookCall(req: AuthRequest, res: Response, next: Next
     const { name, email, phone, company, notes } = req.body
 
     const job = await prisma.videoJob.findFirst({
-      where: { referenceId, userId: req.userId },
+      where: { reference_id: referenceId, user_id: req.userId },
       include: { celebrity: { select: { name: true } } },
     })
     if (!job) throw new AppError('Job not found', 404)
@@ -242,16 +234,16 @@ export async function submitBookCall(req: AuthRequest, res: Response, next: Next
 
     const lead = await prisma.lead.create({
       data: {
-        userId:       req.userId,
-        videoJobId:   job.id,
+        user_id:        req.userId,
+        video_job_id:   job.id,
         name, email, phone, company, notes,
-        celebrityName: celeb.name,
-        productType:  job.productType as string,
-        purpose:      job.purpose,
-        estimatedValue: job.estimatedPrice,
-        currency:     job.currency,
-        source:       'book_call',
-        statusHistory,
+        celebrity_name: celeb.name,
+        product_type:   job.product_type as string,
+        purpose:        job.purpose,
+        estimated_value: job.estimated_price,
+        currency:       job.currency,
+        source:         'book_call',
+        status_history: statusHistory,
       },
     })
 
@@ -265,7 +257,7 @@ export async function submitBookCall(req: AuthRequest, res: Response, next: Next
 export async function cancelJob(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const job = await prisma.videoJob.findFirst({
-      where: { referenceId: req.params.referenceId, userId: req.userId },
+      where: { reference_id: req.params.referenceId, user_id: req.userId },
     })
     if (!job) throw new AppError('Job not found', 404)
     if (job.status !== 'pending') throw new AppError('Only pending jobs can be cancelled', 400)
@@ -273,7 +265,7 @@ export async function cancelJob(req: AuthRequest, res: Response, next: NextFunct
     const history = await appendStatusHistory(job.id, { status: 'cancelled', timestamp: new Date().toISOString(), note: 'Cancelled by customer' })
     const updated = await prisma.videoJob.update({
       where: { id: job.id },
-      data: { status: 'cancelled', statusHistory: history as any },
+      data: { status: 'cancelled', status_history: history as any },
     })
 
     res.json({ success: true, data: updated })
@@ -282,13 +274,12 @@ export async function cancelJob(req: AuthRequest, res: Response, next: NextFunct
   }
 }
 
-// Admin — list all jobs
 export async function adminListJobs(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { status, userId, page = 1, limit = 20 } = req.query
     const where: Record<string, unknown> = {}
     if (status) where.status = (status as string) === 'in-progress' ? 'in_progress' : status
-    if (userId) where.userId = userId
+    if (userId) where.user_id = userId
 
     const skip = (Number(page) - 1) * Number(limit)
     const [jobs, total] = await Promise.all([
@@ -298,7 +289,7 @@ export async function adminListJobs(req: Request, res: Response, next: NextFunct
           user:      { select: { name: true, email: true } },
           celebrity: { select: { name: true, initials: true } },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { created_at: 'desc' },
         skip,
         take: Number(limit),
       }),
@@ -311,7 +302,6 @@ export async function adminListJobs(req: Request, res: Response, next: NextFunct
   }
 }
 
-// Admin — update job status
 export async function adminUpdateJobStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params
@@ -325,17 +315,16 @@ export async function adminUpdateJobStatus(req: Request, res: Response, next: Ne
     const history = await appendStatusHistory(id, { status, timestamp: new Date().toISOString(), note })
     const updateData: Record<string, unknown> = {
       status: prismaStatus,
-      statusHistory: history as any,
+      status_history: history as any,
     }
     if (status === 'delivered') {
-      updateData.deliveredAt = new Date()
-      updateData.downloadEnabled = true
+      updateData.delivered_at    = new Date()
+      updateData.download_enabled = true
     }
     const updated = await prisma.videoJob.update({ where: { id }, data: updateData })
 
-    // Notify user
-    prisma.user.findUnique({ where: { id: job.userId } }).then(user => {
-      if (user) emailService.sendJobStatusUpdate(user.email, user.name, status as any, job.referenceId).catch(() => null)
+    prisma.user.findUnique({ where: { id: job.user_id } }).then(user => {
+      if (user) emailService.sendJobStatusUpdate(user.email, user.name, status as any, job.reference_id).catch(() => null)
     }).catch(() => null)
 
     res.json({ success: true, data: updated })
@@ -344,7 +333,6 @@ export async function adminUpdateJobStatus(req: Request, res: Response, next: Ne
   }
 }
 
-// Admin — approve job (review → delivered)
 export async function adminApproveJob(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const job = await prisma.videoJob.findUnique({ where: { id: req.params.id } })
@@ -355,15 +343,15 @@ export async function adminApproveJob(req: Request, res: Response, next: NextFun
     const updated = await prisma.videoJob.update({
       where: { id: job.id },
       data: {
-        status: 'delivered',
-        downloadEnabled: true,
-        deliveredAt: new Date(),
-        statusHistory: history as any,
+        status:          'delivered',
+        download_enabled: true,
+        delivered_at:    new Date(),
+        status_history:  history as any,
       },
     })
 
-    prisma.user.findUnique({ where: { id: job.userId } }).then(user => {
-      if (user) emailService.sendJobStatusUpdate(user.email, user.name, 'delivered', job.referenceId).catch(() => null)
+    prisma.user.findUnique({ where: { id: job.user_id } }).then(user => {
+      if (user) emailService.sendJobStatusUpdate(user.email, user.name, 'delivered', job.reference_id).catch(() => null)
     }).catch(() => null)
 
     res.json({ success: true, data: updated, message: 'Job approved and delivered to customer' })
@@ -372,7 +360,6 @@ export async function adminApproveJob(req: Request, res: Response, next: NextFun
   }
 }
 
-// Admin — reject job (review → failed)
 export async function adminRejectJob(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { note } = req.body as { note?: string }
@@ -380,19 +367,19 @@ export async function adminRejectJob(req: Request, res: Response, next: NextFunc
     if (!job) throw new AppError('Job not found', 404)
     if (job.status !== 'review') throw new AppError('Job must be in review status to reject', 400)
 
-    const errorMessage = note || 'Rejected by CS team'
-    const history = await appendStatusHistory(job.id, { status: 'failed', timestamp: new Date().toISOString(), note: errorMessage })
+    const error_message = note || 'Rejected by CS team'
+    const history = await appendStatusHistory(job.id, { status: 'failed', timestamp: new Date().toISOString(), note: error_message })
     const updated = await prisma.videoJob.update({
       where: { id: job.id },
       data: {
-        status: 'failed',
-        errorMessage,
-        statusHistory: history as any,
+        status:         'failed',
+        error_message,
+        status_history: history as any,
       },
     })
 
-    prisma.user.findUnique({ where: { id: job.userId } }).then(user => {
-      if (user) emailService.sendJobStatusUpdate(user.email, user.name, 'failed', job.referenceId).catch(() => null)
+    prisma.user.findUnique({ where: { id: job.user_id } }).then(user => {
+      if (user) emailService.sendJobStatusUpdate(user.email, user.name, 'failed', job.reference_id).catch(() => null)
     }).catch(() => null)
 
     res.json({ success: true, data: updated, message: 'Job rejected' })
@@ -401,7 +388,6 @@ export async function adminRejectJob(req: Request, res: Response, next: NextFunc
   }
 }
 
-// Authenticated — suggest scene prompts with AI
 export async function suggestScenePrompts(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { celebrityName, productType, purpose, script } = req.body as {
@@ -417,7 +403,6 @@ export async function suggestScenePrompts(req: AuthRequest, res: Response, next:
   }
 }
 
-// Authenticated — improve script with AI
 export async function improveScript(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { script, celebrityName, productType, purpose } = req.body as {
@@ -434,7 +419,6 @@ export async function improveScript(req: AuthRequest, res: Response, next: NextF
   }
 }
 
-// Authenticated — generate image with Gemini
 export async function generateImage(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { prompt, chatHistory, productTypeSlug, celebrityImageUrl, propImages } = req.body as {
@@ -454,8 +438,8 @@ export async function generateImage(req: AuthRequest, res: Response, next: NextF
     let geminiSystemPrompt: string | undefined
     if (productTypeSlug) {
       const pt = await prisma.productType.findUnique({ where: { slug: productTypeSlug } })
-      if (pt?.geminiSystemPrompt?.trim()) {
-        geminiSystemPrompt = pt.geminiSystemPrompt
+      if (pt?.gemini_system_prompt?.trim()) {
+        geminiSystemPrompt = pt.gemini_system_prompt
       }
     }
 
@@ -565,7 +549,6 @@ export async function generateImage(req: AuthRequest, res: Response, next: NextF
   }
 }
 
-// Authenticated — upload a user asset to S3
 export async function uploadAsset(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { dataUrl } = req.body as { dataUrl?: string }
@@ -593,16 +576,15 @@ export async function uploadAsset(req: AuthRequest, res: Response, next: NextFun
   }
 }
 
-// Customer — stream video download
 export async function getJobDownloadUrl(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const job = await prisma.videoJob.findFirst({
-      where: { referenceId: req.params.referenceId, userId: req.userId },
+      where: { reference_id: req.params.referenceId, user_id: req.userId },
     })
     if (!job) throw new AppError('Job not found', 404)
-    if (!job.downloadEnabled) throw new AppError('Download not enabled for this job', 403)
+    if (!job.download_enabled) throw new AppError('Download not enabled for this job', 403)
 
-    const rawUrl = job.finalVideoUrl || job.watermarkedUrl
+    const rawUrl = job.final_video_url || job.watermarked_url
     if (!rawUrl) throw new AppError('No video file available yet', 404)
 
     const fetchUrl = (await s3Service.presignIfS3(rawUrl)) ?? rawUrl
@@ -610,7 +592,7 @@ export async function getJobDownloadUrl(req: AuthRequest, res: Response, next: N
     const upstream = await fetch(fetchUrl)
     if (!upstream.ok) throw new AppError('Could not retrieve video file', 502)
 
-    const filename = `${job.referenceId}.mp4`
+    const filename = `${job.reference_id}.mp4`
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
     res.setHeader('Content-Type', upstream.headers.get('content-type') ?? 'video/mp4')
     const contentLength = upstream.headers.get('content-length')
@@ -623,12 +605,11 @@ export async function getJobDownloadUrl(req: AuthRequest, res: Response, next: N
   }
 }
 
-// Admin — enable download
 export async function adminEnableDownload(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const job = await prisma.videoJob.update({
       where: { id: req.params.id },
-      data: { downloadEnabled: true },
+      data: { download_enabled: true },
     })
     res.json({ success: true, data: job, message: 'Download enabled' })
   } catch (err) {
