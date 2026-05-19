@@ -1,10 +1,12 @@
 import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
+import bcrypt from 'bcryptjs'
 import { v4 as uuidv4 } from 'uuid'
-import { User } from '../models/User'
+import prisma from '../lib/prisma'
 import { env } from '../config/env'
 import { AppError } from '../middleware/errorHandler'
 import { emailService } from '../services/email.service'
+import { AuthRequest } from '../middleware/auth'
 
 function signToken(userId: string, email: string): string {
   return jwt.sign({ userId, email }, env.jwt.secret, { expiresIn: env.jwt.expiresIn as any })
@@ -14,28 +16,35 @@ export async function register(req: Request, res: Response, next: NextFunction):
   try {
     const { name, email, password, phone, company, accountType } = req.body
 
-    const exists = await User.findOne({ email })
+    const exists = await prisma.user.findUnique({ where: { email } })
     if (exists) throw new AppError('Email already registered', 409)
 
     const verificationToken = uuidv4()
-    const user = await User.create({
-      name, email, password, phone, company,
-      accountType: ['individual', 'influencer', 'agency'].includes(accountType) ? accountType : 'individual',
-      authProvider: 'email',
-      hasEmailPassword: true,
-      emailVerificationToken: verificationToken,
-      status: 'pending',
+    const hashedPassword = await bcrypt.hash(password, 12)
+
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        password: hashedPassword,
+        phone,
+        company,
+        accountType: ['individual', 'influencer', 'agency'].includes(accountType) ? accountType : 'individual',
+        authProvider: 'email',
+        hasEmailPassword: true,
+        emailVerificationToken: verificationToken,
+        status: 'pending',
+      },
     })
 
-    // Send verification email (non-blocking)
     emailService.sendVerificationEmail(email, name, verificationToken).catch(() => null)
 
-    const token = signToken(String(user._id), user.email)
+    const token = signToken(user.id, user.email)
     res.status(201).json({
       success: true,
       message: 'Account created. Please verify your email.',
       token,
-      user: { id: user._id, name: user.name, email: user.email, status: user.status },
+      user: { id: user.id, name: user.name, email: user.email, status: user.status },
     })
   } catch (err) {
     next(err)
@@ -45,23 +54,29 @@ export async function register(req: Request, res: Response, next: NextFunction):
 export async function login(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { email, password } = req.body
-    const user = await User.findOne({ email }).select('+password')
-    if (!user || !(await user.comparePassword(password))) {
+    const user = await prisma.user.findUnique({ where: { email }, select: {
+      id: true, name: true, email: true, password: true, status: true,
+      authProvider: true, hasEmailPassword: true, isEmailVerified: true,
+    }})
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       throw new AppError('Invalid email or password', 401)
     }
     if (user.status === 'blocked') throw new AppError('Account has been blocked', 403)
+    if (user.authProvider === 'email' && !user.hasEmailPassword) {
+      throw new AppError('This account uses Google Sign-In. Please use the Google button to sign in.', 403)
+    }
+    // also handle google-only accounts
     if (user.authProvider === 'google' && !user.hasEmailPassword) {
       throw new AppError('This account uses Google Sign-In. Please use the Google button to sign in.', 403)
     }
 
-    user.lastLoginAt = new Date()
-    await user.save({ validateBeforeSave: false })
+    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
 
-    const token = signToken(String(user._id), user.email)
+    const token = signToken(user.id, user.email)
     res.json({
       success: true,
       token,
-      user: { id: user._id, name: user.name, email: user.email, status: user.status, isEmailVerified: user.isEmailVerified },
+      user: { id: user.id, name: user.name, email: user.email, status: user.status, isEmailVerified: user.isEmailVerified },
     })
   } catch (err) {
     next(err)
@@ -71,13 +86,17 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
 export async function verifyEmail(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { token } = req.params
-    const user = await User.findOne({ emailVerificationToken: token }).select('+emailVerificationToken')
+    const user = await prisma.user.findFirst({ where: { emailVerificationToken: token } })
     if (!user) throw new AppError('Invalid or expired verification token', 400)
 
-    user.isEmailVerified = true
-    user.status = 'active'
-    user.emailVerificationToken = undefined
-    await user.save({ validateBeforeSave: false })
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        isEmailVerified: true,
+        status: 'active',
+        emailVerificationToken: null,
+      },
+    })
 
     res.json({ success: true, message: 'Email verified successfully' })
   } catch (err) {
@@ -88,14 +107,17 @@ export async function verifyEmail(req: Request, res: Response, next: NextFunctio
 export async function forgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { email } = req.body
-    const user = await User.findOne({ email })
+    const user = await prisma.user.findUnique({ where: { email } })
     let resetUrl: string | undefined
-    // Always respond OK to prevent email enumeration
     if (user) {
       const resetToken = uuidv4()
-      user.passwordResetToken = resetToken
-      user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
-      await user.save({ validateBeforeSave: false })
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          passwordResetToken: resetToken,
+          passwordResetExpires: new Date(Date.now() + 60 * 60 * 1000),
+        },
+      })
       emailService.sendPasswordResetEmail(email, user.name, resetToken).catch(() => null)
       if (env.nodeEnv === 'development') {
         resetUrl = `${env.cors.clientUrl}/reset-password/${resetToken}`
@@ -111,17 +133,23 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
   try {
     const { token } = req.params
     const { password } = req.body
-    const user = await User.findOne({
-      passwordResetToken: token,
-      passwordResetExpires: { $gt: Date.now() },
-    }).select('+passwordResetToken +passwordResetExpires')
-
+    const user = await prisma.user.findFirst({
+      where: {
+        passwordResetToken: token,
+        passwordResetExpires: { gt: new Date() },
+      },
+    })
     if (!user) throw new AppError('Invalid or expired reset token', 400)
 
-    user.password = password
-    user.passwordResetToken = undefined
-    user.passwordResetExpires = undefined
-    await user.save()
+    const hashedPassword = await bcrypt.hash(password, 12)
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashedPassword,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+      },
+    })
 
     res.json({ success: true, message: 'Password reset successfully' })
   } catch (err) {
@@ -134,50 +162,64 @@ export async function googleAuth(req: Request, res: Response, next: NextFunction
     const { accessToken } = req.body
     if (!accessToken) throw new AppError('Access token required', 400)
 
-    // Fetch user info from Google
     const googleRes = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${accessToken}`)
     if (!googleRes.ok) throw new AppError('Failed to verify Google token', 401)
     const googleUser = await googleRes.json() as { sub: string; email: string; name: string; picture?: string }
 
     if (!googleUser.email) throw new AppError('Google account has no email', 400)
 
-    // Find or create user
-    let user = await User.findOne({ email: googleUser.email })
+    let user = await prisma.user.findUnique({ where: { email: googleUser.email } })
     if (!user) {
-      user = await User.create({
-        name: googleUser.name || googleUser.email.split('@')[0],
-        email: googleUser.email,
-        password: uuidv4(), // random — real password only set via setPassword endpoint
-        authProvider: 'google',
-        hasEmailPassword: false,
-        isEmailVerified: true,
-        status: 'active',
-        avatarUrl: googleUser.picture,
+      const hashedPassword = await bcrypt.hash(uuidv4(), 12)
+      user = await prisma.user.create({
+        data: {
+          name: googleUser.name || googleUser.email.split('@')[0],
+          email: googleUser.email,
+          password: hashedPassword,
+          authProvider: 'google',
+          hasEmailPassword: false,
+          isEmailVerified: true,
+          status: 'active',
+          avatarUrl: googleUser.picture,
+        },
       })
     } else {
       if (user.authProvider === 'email') {
         throw new AppError('This email is registered with email & password. Please sign in with your email and password.', 403)
       }
       if (user.status === 'blocked') throw new AppError('Account has been blocked', 403)
-      user.lastLoginAt = new Date()
-      if (googleUser.picture && !user.avatarUrl) user.avatarUrl = googleUser.picture
-      await user.save({ validateBeforeSave: false })
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          lastLoginAt: new Date(),
+          ...(googleUser.picture && !user.avatarUrl ? { avatarUrl: googleUser.picture } : {}),
+        },
+      })
+      user = await prisma.user.findUnique({ where: { id: user.id } }) as typeof user
     }
 
-    const token = signToken(String(user._id), user.email)
+    const token = signToken(user!.id, user!.email)
     res.json({
       success: true,
       token,
-      user: { id: user._id, name: user.name, email: user.email, status: user.status, isEmailVerified: user.isEmailVerified },
+      user: { id: user!.id, name: user!.name, email: user!.email, status: user!.status, isEmailVerified: user!.isEmailVerified },
     })
   } catch (err) {
     next(err)
   }
 }
 
-export async function getMe(req: Request & { userId?: string }, res: Response, next: NextFunction): Promise<void> {
+export async function getMe(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const user = await User.findById(req.userId)
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      select: {
+        id: true, name: true, email: true, phone: true, company: true,
+        avatarUrl: true, accountType: true, authProvider: true,
+        hasEmailPassword: true, isEmailVerified: true, status: true,
+        lastLoginAt: true, createdAt: true, updatedAt: true,
+      },
+    })
     if (!user) throw new AppError('User not found', 404)
     res.json({ success: true, user })
   } catch (err) {
@@ -185,19 +227,21 @@ export async function getMe(req: Request & { userId?: string }, res: Response, n
   }
 }
 
-export async function setPassword(req: Request & { userId?: string }, res: Response, next: NextFunction): Promise<void> {
+export async function setPassword(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { password } = req.body
     if (!password || typeof password !== 'string' || password.length < 8) {
       throw new AppError('Password must be at least 8 characters', 400)
     }
 
-    const user = await User.findById(req.userId).select('+password')
+    const user = await prisma.user.findUnique({ where: { id: req.userId } })
     if (!user) throw new AppError('User not found', 404)
 
-    user.password = password
-    user.hasEmailPassword = true
-    await user.save()
+    const hashedPassword = await bcrypt.hash(password, 12)
+    await prisma.user.update({
+      where: { id: req.userId },
+      data: { password: hashedPassword, hasEmailPassword: true },
+    })
 
     res.json({ success: true, message: 'Password set successfully. You can now sign in with email and password.' })
   } catch (err) {
@@ -205,25 +249,29 @@ export async function setPassword(req: Request & { userId?: string }, res: Respo
   }
 }
 
-export async function updateProfile(req: Request & { userId?: string }, res: Response, next: NextFunction): Promise<void> {
+export async function updateProfile(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { name, avatarUrl } = req.body
 
-    const update: Record<string, unknown> = {}
-    if (name && typeof name === 'string') update.name = name.trim()
-    if (avatarUrl !== undefined) update.avatarUrl = avatarUrl
+    const data: Record<string, unknown> = {}
+    if (name && typeof name === 'string') data.name = name.trim()
+    if (avatarUrl !== undefined) data.avatarUrl = avatarUrl
 
-    if (Object.keys(update).length === 0) {
+    if (Object.keys(data).length === 0) {
       res.json({ success: true, message: 'Nothing to update' })
       return
     }
 
-    const user = await User.findByIdAndUpdate(
-      req.userId,
-      { $set: update },
-      { new: true, runValidators: true }
-    )
-    if (!user) throw new AppError('User not found', 404)
+    const user = await prisma.user.update({
+      where: { id: req.userId },
+      data,
+      select: {
+        id: true, name: true, email: true, phone: true, company: true,
+        avatarUrl: true, accountType: true, authProvider: true,
+        hasEmailPassword: true, isEmailVerified: true, status: true,
+        lastLoginAt: true, createdAt: true, updatedAt: true,
+      },
+    })
 
     res.json({ success: true, user })
   } catch (err) {

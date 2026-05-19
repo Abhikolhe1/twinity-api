@@ -1,19 +1,16 @@
-import mongoose from 'mongoose'
-import { env } from './env'
+import prisma from '../lib/prisma'
 import { logger } from './logger'
 
 export async function connectDatabase(): Promise<void> {
   try {
-    await mongoose.connect(env.mongoUri, {
-      serverSelectionTimeoutMS: 5000,
-    })
-    logger.info('MongoDB connected successfully')
+    await prisma.$connect()
+    logger.info('PostgreSQL connected successfully via Prisma')
   } catch (err) {
-    logger.error('MongoDB connection failed:', err)
+    logger.error('PostgreSQL connection failed:', err)
     process.exit(1)
   }
 }
 
-mongoose.connection.on('disconnected', () => {
-  logger.warn('MongoDB disconnected')
+process.on('beforeExit', async () => {
+  await prisma.$disconnect()
 })

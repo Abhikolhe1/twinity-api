@@ -1,0 +1,308 @@
+// Prisma Schema for Twinity API
+// Migrated from Mongoose/MongoDB to Prisma/PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ──────────────────────────────────────────────────────────────────────
+
+enum UserAccountType {
+  individual
+  influencer
+  agency
+}
+
+enum UserAuthProvider {
+  email
+  google
+}
+
+enum UserStatus {
+  active
+  blocked
+  pending
+}
+
+enum VideoJobProductType {
+  greeting
+  avatar_studio @map("avatar-studio")
+  full_body     @map("full-body")
+}
+
+enum VideoJobStatus {
+  pending
+  in_progress @map("in-progress")
+  review
+  delivered
+  failed
+  cancelled
+}
+
+enum LeadStatus {
+  new
+  contacted
+  negotiating
+  paid
+  closed
+  lost
+}
+
+enum LeadSource {
+  book_call    @map("book-call")
+  contact_form @map("contact-form")
+  direct
+}
+
+enum AdminRole {
+  super_admin @map("super-admin")
+  admin
+  ops
+}
+
+// ── Models ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id                     String          @id @default(uuid())
+  name                   String
+  email                  String          @unique
+  password               String
+  phone                  String?
+  company                String?
+  avatarUrl              String?
+  accountType            UserAccountType @default(individual)
+  authProvider           UserAuthProvider @default(email)
+  hasEmailPassword       Boolean         @default(false)
+  isEmailVerified        Boolean         @default(false)
+  emailVerificationToken String?
+  passwordResetToken     String?
+  passwordResetExpires   DateTime?
+  status                 UserStatus      @default(pending)
+  lastLoginAt            DateTime?
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+
+  videoJobs VideoJob[]
+  leads     Lead[]
+
+  @@index([status])
+}
+
+model Celebrity {
+  id               String   @id @default(uuid())
+  name             String
+  nameAr           String
+  slug             String   @unique
+  industry         String
+  nationality      String
+  nationalityAr    String
+  languages        String[]
+  tags             String[]
+  tagsAr           String[]
+  bio              String?
+  bioAr            String?
+  avatarColor      String   @default("linear-gradient(135deg, #9a78fe, #422266)")
+  initials         String
+  thumbnailUrl     String?
+  voiceModelId     String?
+  trainingAudioUrl String?
+  isActive         Boolean  @default(true)
+  isFeatured       Boolean  @default(false)
+  /// Json: { greeting:{min,max}, "avatar-studio":{min,max}, "full-body":{min,max} }
+  priceRange       Json     @default("{\"greeting\":{\"min\":500,\"max\":2000},\"avatar-studio\":{\"min\":2000,\"max\":8000},\"full-body\":{\"min\":6000,\"max\":20000}}")
+  totalOrders      Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  videoJobs VideoJob[]
+
+  @@index([industry, isActive])
+}
+
+model VideoJob {
+  id                  String              @id @default(uuid())
+  referenceId         String              @unique
+  userId              String
+  celebrityId         String
+  productType         VideoJobProductType
+  purpose             String
+  templateId          String?
+  script              String
+  tone                String?
+  duration            String              @default("30s")
+  aspectRatio         String              @default("16:9")
+  resolution          String              @default("1080p")
+  channels            String[]
+  status              VideoJobStatus      @default(pending)
+  /// Json array: [{status, timestamp, note?}]
+  statusHistory       Json                @default("[]")
+  estimatedPrice      Float
+  currency            String              @default("USD")
+  downloadEnabled     Boolean             @default(false)
+  previewUrl          String?
+  finalVideoUrl       String?
+  watermarkedUrl      String?
+  creatifyJobId       String?
+  voiceJobId          String?
+  voiceAudioUrl       String?
+  voiceModel          String?
+  voiceSpeed          Float?
+  voiceChangeEnabled  Boolean             @default(false)
+  voiceChangeSourceUrl String?
+  propImages          String[]
+  sceneNotes          String?
+  backgroundImageUrl  String?
+  audioDuration       Float?
+  processedScript     String?
+  errorMessage        String?
+  deliveredAt         DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id])
+  celebrity Celebrity @relation(fields: [celebrityId], references: [id])
+  leads     Lead[]
+
+  @@index([userId, status])
+  @@index([status])
+  @@index([creatifyJobId])
+}
+
+model Lead {
+  id            String     @id @default(uuid())
+  userId        String?
+  videoJobId    String?
+  name          String
+  email         String
+  phone         String?
+  company       String?
+  celebrityName String
+  productType   String
+  purpose       String
+  notes         String?
+  estimatedValue Float     @default(0)
+  currency      String     @default("USD")
+  status        LeadStatus @default(new)
+  /// Json array: [{status, timestamp, note?, adminId?}]
+  statusHistory Json       @default("[]")
+  assignedTo    String?
+  followUpDate  DateTime?
+  source        LeadSource @default(book_call)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  user     User?     @relation(fields: [userId], references: [id])
+  videoJob VideoJob? @relation(fields: [videoJobId], references: [id])
+
+  @@index([status])
+  @@index([email])
+}
+
+model Admin {
+  id                   String    @id @default(uuid())
+  name                 String
+  email                String    @unique
+  password             String
+  role                 AdminRole @default(ops)
+  roleId               String?
+  isActive             Boolean   @default(true)
+  lastLoginAt          DateTime?
+  passwordResetToken   String?
+  passwordResetExpires DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  assignedRole  Role? @relation("AdminRole", fields: [roleId], references: [id])
+  createdRoles  Role[] @relation("RoleCreatedBy")
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String   @default("")
+  permissions String[]
+  isSystem    Boolean  @default(false)
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  admins      Admin[]  @relation("AdminRole")
+  creator     Admin?   @relation("RoleCreatedBy", fields: [createdBy], references: [id])
+}
+
+model Template {
+  id             String   @id @default(uuid())
+  name           String
+  nameAr         String
+  description    String
+  descriptionAr  String
+  purpose        String
+  purposeAr      String
+  sampleScript   String
+  sampleScriptAr String
+  productTypes   String[]
+  duration       String   @default("30s")
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([productTypes])
+  @@index([isActive])
+  @@index([purpose])
+}
+
+model ProductType {
+  id                 String   @id @default(uuid())
+  slug               String   @unique
+  name               String
+  nameAr             String
+  description        String
+  descriptionAr      String
+  detail             String
+  detailAr           String
+  icon               String   @default("")
+  priceFrom          Float    @default(0)
+  duration           String   @default("")
+  durationAr         String   @default("")
+  useCases           String[]
+  useCasesAr         String[]
+  videoPrompt        String   @default("")
+  geminiSystemPrompt String   @default("")
+  isActive           Boolean  @default(true)
+  order              Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([isActive, order])
+}
+
+model Settings {
+  id                     String   @id @default(uuid())
+  key                    String   @unique
+  platformName           String   @default("Twinity")
+  supportEmail           String   @default("support@twinity.ai")
+  adminEmail             String   @default("admin@twinity.ai")
+  elevenLabsKey          String   @default("")
+  creatifyApiId          String   @default("")
+  creatifyApiKey         String   @default("")
+  openaiKey              String   @default("")
+  geminiApiKey           String   @default("")
+  watermarkText          String   @default("twinity.ai · PREVIEW")
+  watermarkOpacity       String   @default("0.35")
+  watermarkPosition      String   @default("Bottom Center")
+  awsAccessKeyId         String   @default("")
+  awsSecretAccessKey     String   @default("")
+  awsRegion              String   @default("us-east-1")
+  s3Bucket               String   @default("twinity-storage")
+  blockedWords           String[]
+  scriptImprovePrompt    String   @default("")
+  scriptEnhancePrompt    String   @default("")
+  thumbnailProcessPrompt String   @default("")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}

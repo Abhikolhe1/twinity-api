@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
 import { env } from '../config/env'
-import { User } from '../models/User'
+import prisma from '../lib/prisma'
 
 export interface AuthRequest extends Request {
   userId?: string
@@ -20,7 +20,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
 
   try {
     const decoded = jwt.verify(token, env.jwt.secret) as { userId: string; email: string }
-    const user = await User.findById(decoded.userId).select('status')
+    const user = await prisma.user.findUnique({ where: { id: decoded.userId }, select: { status: true } })
     if (!user || user.status === 'blocked') {
       res.status(401).json({ success: false, message: 'Account is not active' })
       return

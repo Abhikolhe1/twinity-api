@@ -4,7 +4,7 @@ dotenv.config()
 export const env = {
   port: parseInt(process.env.PORT || '4000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
-  mongoUri: process.env.MONGODB_URI || 'mongodb://localhost:27017/twinity',
+  databaseUrl: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/twinity',
   jwt: {
     secret: process.env.JWT_SECRET || 'dev_jwt_secret',
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',

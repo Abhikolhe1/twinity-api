@@ -1,32 +1,33 @@
 import dotenv from 'dotenv'
 dotenv.config()
 
-import mongoose from 'mongoose'
-import { Admin } from '../models/Admin'
+import bcrypt from 'bcryptjs'
+import prisma from '../lib/prisma'
 
-const MONGO_URI  = process.env.MONGODB_URI        || 'mongodb://localhost:27017/twinity'
-const ADMIN_EMAIL    = process.env.ADMIN_EMAIL     || 'admin@twinity.ai'
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD  || 'Admin@1234'
-const ADMIN_NAME     = process.env.ADMIN_NAME      || 'Super Admin'
+const ADMIN_EMAIL    = process.env.ADMIN_EMAIL    || 'admin@twinity.ai'
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin@1234'
+const ADMIN_NAME     = process.env.ADMIN_NAME     || 'Super Admin'
 
 async function seed() {
-  await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 5000 })
-  console.log('Connected to MongoDB')
+  await prisma.$connect()
+  console.log('Connected to PostgreSQL')
 
-  const existing = await Admin.findOne({ email: ADMIN_EMAIL })
-
+  const existing = await prisma.admin.findUnique({ where: { email: ADMIN_EMAIL } })
   if (existing) {
     console.log(`Super Admin already exists: ${existing.email} (role: ${existing.role})`)
-    await mongoose.disconnect()
+    await prisma.$disconnect()
     return
   }
 
-  await Admin.create({
-    name:     ADMIN_NAME,
-    email:    ADMIN_EMAIL,
-    password: ADMIN_PASSWORD,
-    role:     'super-admin',
-    isActive: true,
+  const hashedPassword = await bcrypt.hash(ADMIN_PASSWORD, 12)
+  await prisma.admin.create({
+    data: {
+      name:     ADMIN_NAME,
+      email:    ADMIN_EMAIL,
+      password: hashedPassword,
+      role:     'super_admin',
+      isActive: true,
+    },
   })
 
   console.log('Super Admin seeded successfully')
@@ -34,7 +35,7 @@ async function seed() {
   console.log(`  Password: ${ADMIN_PASSWORD}`)
   console.log(`  Role:     super-admin`)
 
-  await mongoose.disconnect()
+  await prisma.$disconnect()
 }
 
 seed().catch(err => {

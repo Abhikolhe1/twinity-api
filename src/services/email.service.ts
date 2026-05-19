@@ -1,7 +1,10 @@
 import nodemailer, { Transporter } from 'nodemailer'
 import { env } from '../config/env'
 import { logger } from '../config/logger'
-import { ILead } from '../models/Lead'
+import type { Lead } from '@prisma/client'
+
+// Loose type for lead notification — accepts Prisma Lead or partial objects passed from other sources
+type ILead = Partial<Lead> & { name?: string; email: string; celebrityName?: string; productType?: string; purpose?: string; estimatedValue?: number; phone?: string; company?: string; notes?: string }
 
 // ── Transporter ────────────────────────────────────────────────
 let _transporter: Transporter | null = null
@@ -306,8 +309,8 @@ export const emailService = {
       <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
              style="background:#F8F5FF;border-radius:12px;padding:4px 20px;margin-bottom:28px;">
         <tbody>
-          ${detailRow('Celebrity', lead.celebrityName)}
-          ${detailRow('Product', lead.productType.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()))}
+          ${detailRow('Celebrity', lead.celebrityName || '—')}
+          ${detailRow('Product', (lead.productType || '').replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()))}
           ${detailRow('Purpose', lead.purpose || '—')}
           ${detailRow('Est. Value', `$${(lead.estimatedValue || 0).toLocaleString()}`)}
           ${detailRow('Email', lead.email)}

@@ -1,8 +1,10 @@
 import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
 import { env } from '../config/env'
-import { Admin, AdminRole } from '../models/Admin'
-import { Role, ALL_PERMISSIONS } from '../models/Role'
+import prisma from '../lib/prisma'
+import { ALL_PERMISSIONS } from '../models/types'
+
+export type AdminRole = 'super-admin' | 'admin' | 'ops'
 
 export interface AdminRequest extends Request {
   adminId?: string
@@ -21,25 +23,30 @@ export async function requireAdmin(req: AdminRequest, res: Response, next: NextF
   }
 
   try {
-    const decoded = jwt.verify(token, env.adminJwtSecret) as { adminId: string; role: AdminRole }
-    const admin = await Admin.findById(decoded.adminId).select('isActive role roleId')
+    const decoded = jwt.verify(token, env.adminJwtSecret) as { adminId: string; role: string }
+    const admin = await prisma.admin.findUnique({
+      where: { id: decoded.adminId },
+      select: { isActive: true, role: true, roleId: true },
+    })
     if (!admin || !admin.isActive) {
       res.status(401).json({ success: false, message: 'Admin account is not active' })
       return
     }
 
     req.adminId = decoded.adminId
-    req.adminRole = decoded.role
+    // Normalise Prisma enum value (super_admin) back to the hyphenated form used in tokens
+    req.adminRole = (decoded.role as string).replace('_', '-') as AdminRole
 
     // Resolve permissions
-    if (admin.role === 'super-admin') {
+    if (admin.role === 'super_admin') {
       req.adminPermissions = [...ALL_PERMISSIONS]
     } else if (admin.roleId) {
-      const role = await Role.findById(admin.roleId).select('permissions')
+      const role = await prisma.role.findUnique({ where: { id: admin.roleId }, select: { permissions: true } })
       req.adminPermissions = role?.permissions ?? []
     } else {
-      // Legacy fallback for hardcoded 'admin' / 'ops' roles
-      req.adminPermissions = admin.role === 'admin'
+      // Legacy fallback
+      const roleStr = (admin.role as string).replace('_', '-')
+      req.adminPermissions = roleStr === 'admin'
         ? ALL_PERMISSIONS.filter(p => !p.startsWith('roles') && !p.startsWith('team'))
         : ALL_PERMISSIONS.filter(p => p.endsWith('.view'))
     }

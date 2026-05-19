@@ -19,7 +19,16 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { writeFile, unlink, readFile } from 'fs/promises'
 import { randomUUID } from 'crypto'
-import { IVideoJob } from '../models/VideoJob'
+// Minimal interface for the job object passed to this service
+interface IVideoJob {
+  referenceId: string
+  finalVideoUrl: string
+  watermarkedUrl: string
+  previewUrl: string
+  status: string
+  statusHistory: unknown[]
+  save(): Promise<void>
+}
 import { s3Service } from './s3.service'
 import { settingsService } from './settings.service'
 import { logger } from '../config/logger'

@@ -1,10 +1,7 @@
 import dotenv from 'dotenv'
 dotenv.config()
 
-import mongoose from 'mongoose'
-import { ProductType } from '../models/ProductType'
-
-const MONGO_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/twinity'
+import prisma from '../lib/prisma'
 
 const PRODUCT_TYPES = [
   {
@@ -67,26 +64,26 @@ const PRODUCT_TYPES = [
 ]
 
 async function run() {
-  await mongoose.connect(MONGO_URI)
-  console.log('Connected to MongoDB')
+  await prisma.$connect()
+  console.log('Connected to PostgreSQL')
 
   let created = 0
   let skipped = 0
 
   for (const pt of PRODUCT_TYPES) {
-    const exists = await ProductType.findOne({ slug: pt.slug })
+    const exists = await prisma.productType.findUnique({ where: { slug: pt.slug } })
     if (exists) {
       console.log(`  skip  ${pt.slug} (already exists)`)
       skipped++
       continue
     }
-    await ProductType.create(pt)
+    await prisma.productType.create({ data: pt })
     console.log(`  seed  ${pt.slug}`)
     created++
   }
 
   console.log(`\nDone — ${created} created, ${skipped} skipped.`)
-  await mongoose.disconnect()
+  await prisma.$disconnect()
 }
 
 run().catch(err => {

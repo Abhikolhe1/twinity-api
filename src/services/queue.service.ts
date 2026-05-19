@@ -8,23 +8,29 @@
  *
  * Stub mode (no Creatify keys): job advances directly to review with audio preview URL.
  */
+import { Prisma } from '@prisma/client'
 import { logger } from '../config/logger'
-import { VideoJob } from '../models/VideoJob'
+import prisma from '../lib/prisma'
 import { aiService } from './ai.service'
 import { s3Service } from './s3.service'
 import { env } from '../config/env'
 
+// Helper: fetch statusHistory array, append entry, return updated array
+async function appendHistory(jobId: string, entry: { status: string; timestamp: string; note?: string }): Promise<Prisma.InputJsonValue> {
+  const job = await prisma.videoJob.findUnique({ where: { id: jobId }, select: { statusHistory: true } })
+  const history = (Array.isArray(job?.statusHistory) ? job!.statusHistory : []) as Prisma.InputJsonValue[]
+  return [...history, entry] as Prisma.InputJsonValue
+}
+
 async function processJob(jobId: string): Promise<void> {
   logger.info(`[Queue] processJob started: jobId=${jobId}`)
-  const job = await VideoJob.findById(jobId).populate<{
-    celebrityId: {
-      _id: string
-      name: string
-      slug: string
-      voiceModelId?: string
-      thumbnailUrl?: string
-    }
-  }>('celebrityId', 'name slug voiceModelId thumbnailUrl')
+
+  const job = await prisma.videoJob.findUnique({
+    where: { id: jobId },
+    include: {
+      celebrity: { select: { id: true, name: true, slug: true, voiceModelId: true, thumbnailUrl: true } },
+    },
+  })
 
   if (!job) {
     logger.warn(`[Queue] processJob: job ${jobId} not found in DB — skipping`)
@@ -35,17 +41,13 @@ async function processJob(jobId: string): Promise<void> {
     return
   }
 
-  const celeb = job.celebrityId as {
-    _id: string
-    name: string
-    slug: string
-    voiceModelId?: string
-    thumbnailUrl?: string
-  }
+  const celeb = job.celebrity
 
-  job.status = 'in-progress'
-  job.statusHistory.push({ status: 'in-progress', timestamp: new Date(), note: 'AI processing started' })
-  await job.save()
+  const inProgressHistory = await appendHistory(jobId, { status: 'in-progress', timestamp: new Date().toISOString(), note: 'AI processing started' })
+  await prisma.videoJob.update({
+    where: { id: jobId },
+    data: { status: 'in_progress', statusHistory: inProgressHistory },
+  })
   logger.info(`[Queue] Job ${job.referenceId} → in-progress`)
 
   try {
@@ -54,7 +56,7 @@ async function processJob(jobId: string): Promise<void> {
     const voiceAudioUrl = (await s3Service.presignIfS3Short(job.voiceAudioUrl, 7200)) ?? job.voiceAudioUrl
     logger.info(`[Queue] Job ${job.referenceId} — using preview audio: ${voiceAudioUrl}`)
 
-    if (!celeb.thumbnailUrl) throw new Error(`Celebrity ${celeb.name} has no thumbnailUrl — upload a photo in the admin panel`)
+    if (!celeb?.thumbnailUrl) throw new Error(`Celebrity ${celeb?.name} has no thumbnailUrl — upload a photo in the admin panel`)
 
     const imageUrl = await s3Service.presignIfS3Short(celeb.thumbnailUrl, 7200)
     logger.info(`[Queue] Job ${job.referenceId} — imageUrl=${imageUrl}`)
@@ -74,27 +76,39 @@ async function processJob(jobId: string): Promise<void> {
       backgroundImageUrl,
     })
 
-    job.creatifyJobId = render.jobId
-
     if (render.status === 'stub') {
-      job.previewUrl     = voiceAudioUrl
-      job.watermarkedUrl = voiceAudioUrl
-      job.finalVideoUrl  = voiceAudioUrl
-      job.status = 'review'
-      job.statusHistory.push({ status: 'review', timestamp: new Date(), note: 'Stub render — ready for CS review' })
+      const reviewHistory = await appendHistory(jobId, { status: 'review', timestamp: new Date().toISOString(), note: 'Stub render — ready for CS review' })
+      await prisma.videoJob.update({
+        where: { id: jobId },
+        data: {
+          creatifyJobId:  render.jobId,
+          previewUrl:     voiceAudioUrl,
+          watermarkedUrl: voiceAudioUrl,
+          finalVideoUrl:  voiceAudioUrl,
+          status:         'review',
+          statusHistory:  reviewHistory,
+        },
+      })
       logger.info(`[Queue] Job ${job.referenceId} → review (stub), audio preview: ${voiceAudioUrl}`)
     } else {
+      await prisma.videoJob.update({
+        where: { id: jobId },
+        data: { creatifyJobId: render.jobId },
+      })
       logger.info(`[Queue] Job ${job.referenceId} Creatify Aurora queued → awaiting webhook (id: ${render.jobId})`)
     }
 
-    await job.save()
-
   } catch (err: any) {
     logger.error(`[Queue] Job ${job.referenceId} failed:`, err)
-    job.status = 'failed'
-    job.errorMessage = err?.message ?? 'AI processing error'
-    job.statusHistory.push({ status: 'failed', timestamp: new Date(), note: job.errorMessage })
-    await job.save()
+    const failedHistory = await appendHistory(jobId, { status: 'failed', timestamp: new Date().toISOString(), note: err?.message ?? 'AI processing error' })
+    await prisma.videoJob.update({
+      where: { id: jobId },
+      data: {
+        status:       'failed',
+        errorMessage: err?.message ?? 'AI processing error',
+        statusHistory: failedHistory,
+      },
+    })
   }
 }
 

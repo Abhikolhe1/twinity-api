@@ -2,7 +2,7 @@
  * Settings Service — loads platform config and API keys from DB.
  * Caches the result for CACHE_TTL_MS to avoid a DB hit on every request.
  */
-import { Settings } from '../models/Settings'
+import prisma from '../lib/prisma'
 import { env } from '../config/env'
 import { logger } from '../config/logger'
 
@@ -36,8 +36,8 @@ async function load(): Promise<CachedSettings> {
   if (_cache && now - _cacheAt < CACHE_TTL_MS) return _cache
 
   try {
-    const doc = await Settings.findOne({ key: 'global' })
-    const d = (doc?.toObject() ?? {}) as Record<string, string>
+    const doc = await prisma.settings.findUnique({ where: { key: 'default' } })
+    const d = (doc ?? {}) as Record<string, string>
     _cache = {
       elevenLabsKey:  d.elevenLabsKey  || env.externalApis.elevenLabs     || '',
       creatifyApiId:  d.creatifyApiId  || env.externalApis.creatifyApiId  || '',
@@ -81,7 +81,7 @@ async function load(): Promise<CachedSettings> {
     }
     _cacheAt = now
   }
-  return _cache
+  return _cache!
 }
 
 export const settingsService = {
