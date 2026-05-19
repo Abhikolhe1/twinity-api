@@ -22,11 +22,10 @@ const app = express()
 
 // ── Security ──────────────────────────────────────────────
 app.use(helmet())
-const allowedOrigins = env.cors.origins ?? [env.cors.clientUrl, env.cors.adminUrl]
+const allowedOrigins = [env.cors.clientUrl, env.cors.adminUrl]
 
 app.use(cors({
   origin: (origin, callback) => {
-    // allow requests with no origin (curl, server-to-server, health checks)
     if (!origin) return callback(null, true)
     if (allowedOrigins.includes(origin)) return callback(null, true)
     callback(new Error(`CORS: origin ${origin} not allowed`))

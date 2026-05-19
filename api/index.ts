@@ -1,29 +1,19 @@
-import mongoose from 'mongoose'
 import app from '../src/app'
-import { env } from '../src/config/env'
+import prisma from '../src/lib/prisma'
 
 let isConnected = false
 
 async function ensureDb(): Promise<void> {
-  if (isConnected && mongoose.connection.readyState === 1) return
-  await mongoose.connect(env.mongoUri, {
-    serverSelectionTimeoutMS: 5000,
-    connectTimeoutMS: 5000,
-  })
+  if (isConnected) return
+  await prisma.$connect()
   isConnected = true
 }
 
 function getAllowedOrigins(): string[] {
-  // Primary: CORS_ORIGINS comma-separated list
-  const raw = process.env.CORS_ORIGINS || ''
-  const list = raw.split(',').map(s => s.trim()).filter(Boolean)
-  if (list.length > 0) return list
-
-  // Fallback: individual CLIENT_URL / ADMIN_URL env vars
-  const fallback: string[] = []
-  if (process.env.CLIENT_URL) fallback.push(process.env.CLIENT_URL)
-  if (process.env.ADMIN_URL)  fallback.push(process.env.ADMIN_URL)
-  return fallback
+  const origins: string[] = []
+  if (process.env.CLIENT_URL) origins.push(process.env.CLIENT_URL)
+  if (process.env.ADMIN_URL)  origins.push(process.env.ADMIN_URL)
+  return origins
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -31,7 +21,6 @@ function applyCors(req: any, res: any): boolean {
   const origin: string | undefined = req.headers['origin']
   const allowed = getAllowedOrigins()
 
-  // Non-browser requests (curl, server-to-server) have no Origin header — always allow
   if (!origin) return true
 
   if (allowed.includes(origin)) {
@@ -43,41 +32,28 @@ function applyCors(req: any, res: any): boolean {
     return true
   }
 
-  // Origin not allowed — return explicit 403 with a diagnostic message
-  res.status(403).json({
-    success: false,
-    message: `CORS: origin '${origin}' is not allowed. Set CORS_ORIGINS in Vercel env vars.`,
-    allowed,
-  })
+  res.status(403).json({ success: false, message: `CORS: origin '${origin}' is not allowed.`, allowed })
   return false
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default async function handler(req: any, res: any): Promise<void> {
-  // 1. Apply CORS headers immediately — before DB, before Express
   const corsOk = applyCors(req, res)
 
-  // 2. OPTIONS preflight: respond with 204 immediately, no DB or Express needed
   if (req.method === 'OPTIONS') {
     if (corsOk) res.status(204).end()
     return
   }
 
-  // 3. Origin was rejected — response already sent
   if (!corsOk) return
 
-  // 4. Connect to MongoDB
   try {
     await ensureDb()
   } catch {
-    res.status(503).json({
-      success: false,
-      message: 'Database unavailable — ensure MONGODB_URI is set in Vercel environment variables',
-    })
+    res.status(503).json({ success: false, message: 'Database unavailable — ensure DATABASE_URL is set in environment variables' })
     return
   }
 
-  // 5. Forward to Express for all business logic
   return new Promise((resolve, reject) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     app(req, res, (err: any) => {
