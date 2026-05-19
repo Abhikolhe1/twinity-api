@@ -78,7 +78,7 @@ export async function deleteRole(req: AdminRequest, res: Response, next: NextFun
   try {
     const role = await prisma.role.findUnique({ where: { id: req.params.id } })
     if (!role) throw new AppError('Role not found', 404)
-    if (role.isSystem) throw new AppError('System roles cannot be deleted', 400)
+    if (role.is_system) throw new AppError('System roles cannot be deleted', 400)
 
     const count = await prisma.admin.count({ where: { role_id: req.params.id } })
     if (count > 0) {

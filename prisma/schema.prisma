@@ -288,30 +288,21 @@ model ProductType {
   @@map("product_types")
 }
 
-model Settings {
-  id                      String   @id @default(uuid())
-  key                     String   @unique
-  platform_name           String   @default("Twinity")
-  support_email           String   @default("support@twinity.ai")
-  admin_email             String   @default("admin@twinity.ai")
-  eleven_labs_key         String   @default("")
-  creatify_api_id         String   @default("")
-  creatify_api_key        String   @default("")
-  openai_key              String   @default("")
-  gemini_api_key          String   @default("")
-  watermark_text          String   @default("twinity.ai · PREVIEW")
-  watermark_opacity       String   @default("0.35")
-  watermark_position      String   @default("Bottom Center")
-  aws_access_key_id       String   @default("")
-  aws_secret_access_key   String   @default("")
-  aws_region              String   @default("us-east-1")
-  s3_bucket               String   @default("twinity-storage")
-  blocked_words           String[]
-  script_improve_prompt   String   @default("")
-  script_enhance_prompt   String   @default("")
-  thumbnail_process_prompt String  @default("")
-  created_at              DateTime @default(now())
-  updated_at              DateTime @updatedAt
+model Setting {
+  id         String   @id @default(uuid())
+  key        String   @unique
+  value      String   @default("")
+  type       String   @default("general")
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
   @@map("settings")
+}
+
+model BlockedWord {
+  id         String   @id @default(uuid())
+  word       String   @unique
+  created_at DateTime @default(now())
+
+  @@map("blocked_words")
 }

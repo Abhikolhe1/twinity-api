@@ -47,8 +47,8 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
     if (!celeb || !celeb.is_active) throw new AppError('Celebrity not found or inactive', 404)
 
     if (script) {
-      const settings = await prisma.settings.findUnique({ where: { key: 'default' } })
-      const blockedWords: string[] = settings?.blocked_words ?? []
+      const bwRows = await prisma.blockedWord.findMany()
+      const blockedWords: string[] = bwRows.map(r => r.word)
       const scriptLower = script.toLowerCase()
       const found = blockedWords.filter((word: string) => {
         const regex = new RegExp(`\\b${word.toLowerCase()}\\b`)

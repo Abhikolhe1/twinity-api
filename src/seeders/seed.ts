@@ -440,6 +440,38 @@ async function seed() {
     }
   }
 
+  // 8. Settings (key-value store defaults)
+  const SETTINGS_DEFAULTS = [
+    { key: 'platform_name',           value: 'Twinity',                  type: 'general'    },
+    { key: 'support_email',           value: 'support@twinity.ai',       type: 'general'    },
+    { key: 'admin_email',             value: ADMIN_EMAIL,                type: 'general'    },
+    { key: 'eleven_labs_key',         value: '',                         type: 'ai'         },
+    { key: 'creatify_api_id',         value: '',                         type: 'ai'         },
+    { key: 'creatify_api_key',        value: '',                         type: 'ai'         },
+    { key: 'openai_key',              value: '',                         type: 'ai'         },
+    { key: 'gemini_api_key',          value: '',                         type: 'ai'         },
+    { key: 'watermark_text',          value: 'twinity.ai · PREVIEW',     type: 'watermark'  },
+    { key: 'watermark_opacity',       value: '0.35',                     type: 'watermark'  },
+    { key: 'watermark_position',      value: 'Bottom Center',            type: 'watermark'  },
+    { key: 'aws_access_key_id',       value: '',                         type: 's3'         },
+    { key: 'aws_secret_access_key',   value: '',                         type: 's3'         },
+    { key: 'aws_region',              value: 'us-east-1',                type: 's3'         },
+    { key: 's3_bucket',               value: 'twinity-storage',          type: 's3'         },
+    { key: 'script_improve_prompt',   value: '',                         type: 'ai_prompts' },
+    { key: 'script_enhance_prompt',   value: '',                         type: 'ai_prompts' },
+    { key: 'thumbnail_process_prompt',value: '',                         type: 'ai_prompts' },
+  ]
+
+  for (const s of SETTINGS_DEFAULTS) {
+    const existing = await prisma.setting.findUnique({ where: { key: s.key } })
+    if (existing) {
+      console.log(`[skip] Setting already exists: ${s.key}`)
+    } else {
+      await prisma.setting.create({ data: s })
+      console.log(`[ok]   Setting created: ${s.key}`)
+    }
+  }
+
   console.log('\nSeeding complete.')
   await prisma.$disconnect()
 }

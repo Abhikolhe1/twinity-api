@@ -11,7 +11,7 @@ export type {
   Role,
   Template,
   ProductType,
-  Settings,
+  Setting,
   Prisma,
 } from '@prisma/client'
 

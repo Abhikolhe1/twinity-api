@@ -36,8 +36,10 @@ async function load(): Promise<CachedSettings> {
   if (_cache && now - _cacheAt < CACHE_TTL_MS) return _cache
 
   try {
-    const doc = await prisma.settings.findUnique({ where: { key: 'default' } })
-    const d = (doc ?? {}) as Record<string, string>
+    const rows = await prisma.setting.findMany()
+    const d: Record<string, string> = {}
+    for (const row of rows) d[row.key] = row.value
+
     _cache = {
       elevenLabsKey:  d.eleven_labs_key  || env.externalApis.elevenLabs     || '',
       creatifyApiId:  d.creatify_api_id  || env.externalApis.creatifyApiId  || '',
