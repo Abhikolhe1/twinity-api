@@ -8,9 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "eslint src/**/*.ts",
-    "seed:admin": "ts-node-dev --transpile-only src/seeders/superAdmin.ts",
     "seed": "ts-node-dev --transpile-only src/seeders/seed.ts",
-    "seed:product-types": "ts-node-dev --transpile-only src/seeders/seedProductTypes.ts",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push"
   },
