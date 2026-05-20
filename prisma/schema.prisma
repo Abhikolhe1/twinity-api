@@ -33,6 +33,7 @@ enum VideoJobProductType {
   greeting
   avatar_studio @map("avatar-studio")
   full_body     @map("full-body")
+  image_ad      @map("image-ad")
 }
 
 enum VideoJobStatus {

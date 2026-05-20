@@ -12,6 +12,7 @@ interface CachedSettings {
   elevenLabsKey: string
   creatifyApiId: string
   creatifyApiKey: string
+  falApiKey: string
   openaiKey: string
   geminiApiKey: string
   watermarkText: string
@@ -44,6 +45,7 @@ async function load(): Promise<CachedSettings> {
       elevenLabsKey:  d.eleven_labs_key  || env.externalApis.elevenLabs     || '',
       creatifyApiId:  d.creatify_api_id  || env.externalApis.creatifyApiId  || '',
       creatifyApiKey: d.creatify_api_key || env.externalApis.creatifyApiKey || '',
+      falApiKey:      d.fal_api_key      || env.externalApis.falApiKey      || '',
       openaiKey:      d.openai_key       || env.externalApis.openai         || '',
       geminiApiKey:   d.gemini_api_key   || '',
       watermarkText:     d.watermark_text     || 'twinity.ai · PREVIEW',
@@ -66,6 +68,7 @@ async function load(): Promise<CachedSettings> {
       elevenLabsKey:  env.externalApis.elevenLabs     || '',
       creatifyApiId:  env.externalApis.creatifyApiId  || '',
       creatifyApiKey: env.externalApis.creatifyApiKey || '',
+      falApiKey:      env.externalApis.falApiKey      || '',
       openaiKey:      env.externalApis.openai         || '',
       geminiApiKey:   '',
       watermarkText:     'twinity.ai · PREVIEW',

@@ -17,6 +17,7 @@ import teamRoutes       from './routes/team.routes'
 import templateRoutes     from './routes/template.routes'
 import productTypeRoutes  from './routes/productType.routes'
 import webhookRoutes      from './routes/webhook.routes'
+import imageAdRoutes      from './routes/imageAd.routes'
 
 const app = express()
 
@@ -72,6 +73,7 @@ app.use('/api/admin/roles', roleRoutes)
 app.use('/api/admin/team',  teamRoutes)
 app.use('/api/templates',     templateRoutes)
 app.use('/api/product-types', productTypeRoutes)
+app.use('/api/image-ads',     imageAdRoutes)
 
 // ── 404 ───────────────────────────────────────────────────
 app.use((_req, res) => {

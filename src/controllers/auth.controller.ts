@@ -44,7 +44,7 @@ export async function register(req: Request, res: Response, next: NextFunction):
       success: true,
       message: 'Account created. Please verify your email.',
       token,
-      user: { id: user.id, name: user.name, email: user.email, status: user.status },
+      user: { id: user.id, name: user.name, email: user.email, status: user.status, is_email_verified: false },
     })
   } catch (err) {
     next(err)
@@ -72,7 +72,7 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
     res.json({
       success: true,
       token,
-      user: { id: user.id, name: user.name, email: user.email, status: user.status, isEmailVerified: user.is_email_verified },
+      user: { id: user.id, name: user.name, email: user.email, status: user.status, is_email_verified: user.is_email_verified },
     })
   } catch (err) {
     next(err)
@@ -198,7 +198,7 @@ export async function googleAuth(req: Request, res: Response, next: NextFunction
     res.json({
       success: true,
       token,
-      user: { id: user!.id, name: user!.name, email: user!.email, status: user!.status, isEmailVerified: user!.is_email_verified },
+      user: { id: user!.id, name: user!.name, email: user!.email, status: user!.status, is_email_verified: user!.is_email_verified },
     })
   } catch (err) {
     next(err)
@@ -247,11 +247,11 @@ export async function setPassword(req: AuthRequest, res: Response, next: NextFun
 
 export async function updateProfile(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { name, avatarUrl } = req.body
+    const { name, avatar_url } = req.body
 
     const data: Record<string, unknown> = {}
     if (name && typeof name === 'string') data.name = name.trim()
-    if (avatarUrl !== undefined) data.avatar_url = avatarUrl
+    if (avatar_url !== undefined) data.avatar_url = avatar_url
 
     if (Object.keys(data).length === 0) {
       res.json({ success: true, message: 'Nothing to update' })

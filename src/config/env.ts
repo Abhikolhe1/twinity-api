@@ -40,6 +40,7 @@ export const env = {
     creatifyApiId: process.env.CREATIFY_API_ID     || '',
     creatifyApiKey: process.env.CREATIFY_API_KEY   || '',
     openai:        process.env.OPENAI_API_KEY      || '',
+    falApiKey:     process.env.FAL_KEY             || '',
   },
   serverUrl: process.env.SERVER_URL || '',
   cors: {

@@ -1,9 +1,13 @@
 import { Router } from 'express'
-import { creatifyWebhook, testWatermark } from '../controllers/webhook.controller'
+import { creatifyWebhook, falWebhook, testWatermark } from '../controllers/webhook.controller'
 
 const router = Router()
 
-// Creatify Aurora — avatar video generation events
+// fal.ai — image/video generation events
+router.get('/fal',  (_req, res) => res.json({ success: true, service: 'twinity-fal-webhook' }))
+router.post('/fal', falWebhook)
+
+// Creatify Aurora — avatar video generation events (legacy)
 router.get('/creatify',  (_req, res) => res.json({ success: true, service: 'twinity-creatify-webhook' }))
 router.post('/creatify', creatifyWebhook)
 

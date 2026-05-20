@@ -1,9 +1,13 @@
 /**
- * Webhook Controller — handles inbound callbacks from Creatify Aurora.
+ * Webhook Controller — handles inbound callbacks from Creatify Aurora and fal.ai.
  *
  * Creatify → /api/webhooks/creatify
  *   - status "done"   — set final_video_url, advance job to 'review'
  *   - status "failed" — mark job failed, notify customer
+ *
+ * fal.ai → /api/webhooks/fal
+ *   - status "OK"    — download video, archive to S3, advance job to 'review'
+ *   - status "ERROR" — mark job failed, notify customer
  */
 import { Request, Response } from 'express'
 import { Prisma } from '@prisma/client'
@@ -96,6 +100,94 @@ export async function testWatermark(req: Request, res: Response): Promise<void> 
   } catch (err: any) {
     logger.error('[TestWatermark] Error:', err)
     res.status(500).json({ success: false, message: err?.message ?? 'Watermark test failed' })
+  }
+}
+
+// ── fal.ai webhook ────────────────────────────────────────────────────────────
+
+interface FalWebhookPayload {
+  request_id?: string
+  status?: string      // "OK" = completed, "ERROR" = failed
+  payload?: {
+    video?: { url?: string; content_type?: string; file_name?: string; file_size?: number }
+  }
+  error?: string | null
+}
+
+export async function falWebhook(req: Request, res: Response): Promise<void> {
+  try {
+    const payload = req.body as FalWebhookPayload
+    logger.info(`[Webhook] fal.ai raw payload: ${JSON.stringify(payload)}`)
+
+    const requestId = payload.request_id ?? ''
+    const status    = payload.status     ?? ''
+    const falUrl    = payload.payload?.video?.url ?? ''
+    const errorMsg  = payload.error      ?? ''
+
+    logger.info(`[Webhook] fal.ai event — status=${status}, request_id=${requestId}`)
+
+    if (status !== 'OK' && status !== 'ERROR') {
+      logger.info(`[Webhook] fal.ai: unhandled status "${status}" — ignoring`)
+      res.json({ success: true })
+      return
+    }
+
+    const dbJob = await prisma.videoJob.findFirst({ where: { creatify_job_id: requestId } })
+    if (!dbJob) {
+      logger.warn(`[Webhook] fal.ai: no job found for request_id=${requestId}`)
+      res.status(404).json({ success: false, message: 'Job not found' })
+      return
+    }
+
+    if (status === 'OK') {
+      if (!falUrl) {
+        logger.error(`[Webhook] fal.ai: no video.url for job=${dbJob.reference_id} — cannot proceed`)
+        res.json({ success: true })
+        return
+      }
+
+      res.json({ success: true })
+
+      settingsService.get().then(({ adminEmail }) => {
+        if (adminEmail) emailService.sendNewLeadNotification({ email: adminEmail } as any).catch(() => null)
+      }).catch(() => null)
+
+      const jobAdapter = makeJobAdapter(dbJob.id, dbJob.reference_id, {
+        finalVideoUrl:  dbJob.final_video_url  ?? '',
+        watermarkedUrl: dbJob.watermarked_url  ?? '',
+        previewUrl:     dbJob.preview_url      ?? '',
+        status:         dbJob.status,
+        statusHistory:  (Array.isArray(dbJob.status_history) ? dbJob.status_history : []) as unknown[],
+      })
+
+      applyWatermarkAndAdvanceJob(jobAdapter as any, falUrl)
+        .then(() => logger.info(`[Webhook] Seedance complete: job=${dbJob.reference_id} → review`))
+        .catch(err => logger.error(`[Webhook] applyWatermark failed for ${dbJob.reference_id}:`, err))
+      return
+
+    } else {
+      const history = (Array.isArray(dbJob.status_history) ? dbJob.status_history : []) as Prisma.InputJsonValue[]
+      const error_message = String(errorMsg || 'Seedance 2.0 render failed')
+      const newHistory: Prisma.InputJsonValue = [
+        ...history,
+        { status: 'failed', timestamp: new Date().toISOString(), note: error_message },
+      ]
+
+      await prisma.videoJob.update({
+        where: { id: dbJob.id },
+        data: { status: 'failed', error_message, status_history: newHistory },
+      })
+      logger.warn(`[Webhook] Seedance failed: job=${dbJob.reference_id}, error=${errorMsg}`)
+
+      prisma.user.findUnique({ where: { id: dbJob.user_id } }).then(user => {
+        if (user) emailService.sendJobStatusUpdate(user.email, user.name, 'failed', dbJob.reference_id).catch(() => null)
+      }).catch(() => null)
+    }
+
+    res.json({ success: true })
+  } catch (err: any) {
+    logger.error('[Webhook] fal.ai webhook error:', err)
+    res.status(200).json({ success: false, message: 'Internal error — logged' })
   }
 }
 
