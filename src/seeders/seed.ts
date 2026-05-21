@@ -2,6 +2,7 @@ import dotenv from 'dotenv'
 dotenv.config()
 
 import bcrypt from 'bcryptjs'
+import { VideoJobProductType, VideoJobStatus } from '@prisma/client'
 import prisma from '../lib/prisma'
 
 const ADMIN_EMAIL    = process.env.ADMIN_EMAIL    || 'admin@twinity.ai'
@@ -178,12 +179,12 @@ async function seed() {
 
   // 4. Video Jobs
   const VIDEO_JOBS = [
-    { ref: 'TWN-2025-0001', userEmail: 'ahmed@gmail.com',  celebSlug: 'mohamed-salah',     product_type: 'greeting'      as const, status: 'delivered'   as const, estimated_price: 1600,  download_enabled: true,  purpose: 'Brand campaign for Ramadan promotion' },
-    { ref: 'TWN-2025-0002', userEmail: 'sara@outlook.com', celebSlug: 'cristiano-ronaldo', product_type: 'video_ad'      as const, status: 'in_progress' as const, estimated_price: 20000, download_enabled: false, purpose: 'Global sports brand advertisement' },
-    { ref: 'TWN-2025-0003', userEmail: 'khalid@co.sa',     celebSlug: 'amr-diab',          product_type: 'video_ad'      as const, status: 'review'      as const, estimated_price: 4000,  download_enabled: false, purpose: 'Product launch event invitation' },
-    { ref: 'TWN-2025-0004', userEmail: 'layla@mkt.ae',     celebSlug: 'nancy-ajram',       product_type: 'greeting'      as const, status: 'pending'     as const, estimated_price: 1000,  download_enabled: false, purpose: 'Birthday greeting for VIP client' },
-    { ref: 'TWN-2025-0005', userEmail: 'omar@brand.ae',    celebSlug: 'mrbeast',           product_type: 'greeting'      as const, status: 'delivered'   as const, estimated_price: 1650,  download_enabled: true,  purpose: 'Social media marketing campaign' },
-    { ref: 'TWN-2025-0006', userEmail: 'noura@company.qa', celebSlug: 'haifa-wehbe',       product_type: 'video_ad'      as const, status: 'failed'      as const, estimated_price: 2750,  download_enabled: false, purpose: 'Corporate entertainment event' },
+    { ref: 'TWN-2025-0001', userEmail: 'ahmed@gmail.com',  celebSlug: 'mohamed-salah',     product_type: VideoJobProductType.greeting, status: VideoJobStatus.delivered,    estimated_price: 1600,  download_enabled: true,  purpose: 'Brand campaign for Ramadan promotion' },
+    { ref: 'TWN-2025-0002', userEmail: 'sara@outlook.com', celebSlug: 'cristiano-ronaldo', product_type: VideoJobProductType.video_ad, status: VideoJobStatus.in_progress,  estimated_price: 20000, download_enabled: false, purpose: 'Global sports brand advertisement' },
+    { ref: 'TWN-2025-0003', userEmail: 'khalid@co.sa',     celebSlug: 'amr-diab',          product_type: VideoJobProductType.video_ad, status: VideoJobStatus.review,       estimated_price: 4000,  download_enabled: false, purpose: 'Product launch event invitation' },
+    { ref: 'TWN-2025-0004', userEmail: 'layla@mkt.ae',     celebSlug: 'nancy-ajram',       product_type: VideoJobProductType.greeting, status: VideoJobStatus.pending,      estimated_price: 1000,  download_enabled: false, purpose: 'Birthday greeting for VIP client' },
+    { ref: 'TWN-2025-0005', userEmail: 'omar@brand.ae',    celebSlug: 'mrbeast',           product_type: VideoJobProductType.greeting, status: VideoJobStatus.delivered,    estimated_price: 1650,  download_enabled: true,  purpose: 'Social media marketing campaign' },
+    { ref: 'TWN-2025-0006', userEmail: 'noura@company.qa', celebSlug: 'haifa-wehbe',       product_type: VideoJobProductType.video_ad, status: VideoJobStatus.failed,       estimated_price: 2750,  download_enabled: false, purpose: 'Corporate entertainment event' },
   ]
 
   for (const j of VIDEO_JOBS) {
