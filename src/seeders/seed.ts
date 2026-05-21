@@ -177,51 +177,7 @@ async function seed() {
     }
   }
 
-  // 4. Video Jobs
-  const VIDEO_JOBS = [
-    { ref: 'TWN-2025-0001', userEmail: 'ahmed@gmail.com',  celebSlug: 'mohamed-salah',     product_type: VideoJobProductType.greeting, status: VideoJobStatus.delivered,    estimated_price: 1600,  download_enabled: true,  purpose: 'Brand campaign for Ramadan promotion' },
-    { ref: 'TWN-2025-0002', userEmail: 'sara@outlook.com', celebSlug: 'cristiano-ronaldo', product_type: VideoJobProductType.video_ad, status: VideoJobStatus.in_progress,  estimated_price: 20000, download_enabled: false, purpose: 'Global sports brand advertisement' },
-    { ref: 'TWN-2025-0003', userEmail: 'khalid@co.sa',     celebSlug: 'amr-diab',          product_type: VideoJobProductType.video_ad, status: VideoJobStatus.review,       estimated_price: 4000,  download_enabled: false, purpose: 'Product launch event invitation' },
-    { ref: 'TWN-2025-0004', userEmail: 'layla@mkt.ae',     celebSlug: 'nancy-ajram',       product_type: VideoJobProductType.greeting, status: VideoJobStatus.pending,      estimated_price: 1000,  download_enabled: false, purpose: 'Birthday greeting for VIP client' },
-    { ref: 'TWN-2025-0005', userEmail: 'omar@brand.ae',    celebSlug: 'mrbeast',           product_type: VideoJobProductType.greeting, status: VideoJobStatus.delivered,    estimated_price: 1650,  download_enabled: true,  purpose: 'Social media marketing campaign' },
-    { ref: 'TWN-2025-0006', userEmail: 'noura@company.qa', celebSlug: 'haifa-wehbe',       product_type: VideoJobProductType.video_ad, status: VideoJobStatus.failed,       estimated_price: 2750,  download_enabled: false, purpose: 'Corporate entertainment event' },
-  ]
-
-  for (const j of VIDEO_JOBS) {
-    const existing = await prisma.videoJob.findUnique({ where: { reference_id: j.ref } })
-    if (existing) {
-      console.log(`[skip] Video job already exists: ${j.ref}`)
-      continue
-    }
-    const user_id      = userMap[j.userEmail]
-    const celebrity_id = celebMap[j.celebSlug]
-    if (!user_id || !celebrity_id) {
-      console.log(`[warn] Skipping job ${j.ref} — missing user or celebrity`)
-      continue
-    }
-    await prisma.videoJob.create({
-      data: {
-        reference_id:    j.ref,
-        user_id,
-        celebrity_id,
-        product_type:    j.product_type,
-        purpose:         j.purpose,
-        script:          `Hi, this is a ${j.product_type} video for ${j.purpose.toLowerCase()}.`,
-        tone:            'professional',
-        duration:        '30s',
-        aspect_ratio:    '16:9',
-        resolution:      '1080p',
-        status:          j.status,
-        estimated_price: j.estimated_price,
-        download_enabled: j.download_enabled,
-        status_history:  [{ status: j.status, timestamp: new Date().toISOString() }],
-        ...(j.status === 'delivered' ? { delivered_at: new Date() } : {}),
-      },
-    })
-    console.log(`[ok]   Video job created: ${j.ref} (${j.status})`)
-  }
-
-  // 5. Leads
+  // 4. Leads
   const LEADS = [
     { userEmail: 'ahmed@gmail.com',  celebrity_name: 'Mohamed Salah',     product_type: 'greeting',      purpose: 'Brand campaign',          estimated_value: 4200,  status: 'new'         as const, source: 'book_call'    as const, phone: '+971501234567', company: 'Brand Co.'      },
     { userEmail: 'sara@outlook.com', celebrity_name: 'Cristiano Ronaldo', product_type: 'video-ad',      purpose: 'Global advertisement',    estimated_value: 18000, status: 'contacted'   as const, source: 'book_call'    as const, phone: '+966551234567', company: 'Digital Agency' },
@@ -257,7 +213,7 @@ async function seed() {
     console.log(`[ok]   Lead created: ${user?.name} → ${l.celebrity_name} (${l.status})`)
   }
 
-  // 6. Templates
+  // 5. Templates
   const TEMPLATES = [
     {
       name: 'Birthday Wish', name_ar: 'تهنئة عيد الميلاد',
@@ -388,7 +344,7 @@ async function seed() {
     }
   }
 
-  // 7. Product Types
+  // 6. Product Types
   const PRODUCT_TYPES = [
     {
       slug: 'greeting', name: 'Personal Greetings', name_ar: 'تحيات المشاهير',
@@ -429,7 +385,7 @@ async function seed() {
     }
   }
 
-  // 8. Settings (key-value store defaults)
+  // 7. Settings (key-value store defaults)
   const SETTINGS_DEFAULTS = [
     { key: 'platform_name',           value: 'Twinity',                  type: 'general'    },
     { key: 'support_email',           value: 'support@twinity.ai',       type: 'general'    },
