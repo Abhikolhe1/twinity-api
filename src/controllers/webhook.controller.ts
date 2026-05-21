@@ -12,7 +12,6 @@
 import { Request, Response } from 'express'
 import { Prisma } from '@prisma/client'
 import prisma from '../lib/prisma'
-import { settingsService } from '../services/settings.service'
 import { emailService } from '../services/email.service'
 import { applyWatermarkAndAdvanceJob } from '../services/watermark.service'
 import { logger } from '../config/logger'
@@ -148,10 +147,6 @@ export async function falWebhook(req: Request, res: Response): Promise<void> {
 
       res.json({ success: true })
 
-      settingsService.get().then(({ adminEmail }) => {
-        if (adminEmail) emailService.sendNewLeadNotification({ email: adminEmail } as any).catch(() => null)
-      }).catch(() => null)
-
       const jobAdapter = makeJobAdapter(dbJob.id, dbJob.reference_id, {
         finalVideoUrl:  dbJob.final_video_url  ?? '',
         watermarkedUrl: dbJob.watermarked_url  ?? '',
@@ -226,10 +221,6 @@ export async function creatifyWebhook(req: Request, res: Response): Promise<void
       }
 
       res.json({ success: true })
-
-      settingsService.get().then(({ adminEmail }) => {
-        if (adminEmail) emailService.sendNewLeadNotification({ email: adminEmail } as any).catch(() => null)
-      }).catch(() => null)
 
       const jobAdapter = makeJobAdapter(dbJob.id, dbJob.reference_id, {
         finalVideoUrl:  dbJob.final_video_url  ?? '',
