@@ -9,7 +9,6 @@
     "start": "node dist/index.js",
     "lint": "eslint src/**/*.ts",
     "seed": "ts-node-dev --transpile-only src/seeders/seed.ts",
-    "rename-product-types": "ts-node-dev --transpile-only src/seeders/rename-product-types.ts",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push"
   },

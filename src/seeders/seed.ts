@@ -20,7 +20,7 @@ const CELEBRITIES = [
     is_active: true, is_featured: true, total_orders: 34,
     bio: "Global football icon and five-time Ballon d'Or winner.",
     bio_ar: 'أيقونة كرة القدم العالمية والفائز بخمس جوائز الكرة الذهبية.',
-    price_range: { greeting: { min: 1200, max: 3500 }, 'avatar-studio': { min: 4000, max: 10000 }, 'full-body': { min: 10000, max: 30000 } },
+    price_range: { greeting: { min: 1200, max: 3500 }, 'video-ad': { min: 4000, max: 10000 } },
   },
   {
     name: 'Mohamed Salah', name_ar: 'محمد صلاح', slug: 'mohamed-salah',
@@ -32,7 +32,7 @@ const CELEBRITIES = [
     is_active: true, is_featured: true, total_orders: 28,
     bio: 'Egyptian football king, Liverpool and Egypt captain.',
     bio_ar: 'ملك الكرة المصري، قائد ليفربول ومنتخب مصر.',
-    price_range: { greeting: { min: 900, max: 2500 }, 'avatar-studio': { min: 3000, max: 8000 }, 'full-body': { min: 8000, max: 22000 } },
+    price_range: { greeting: { min: 900, max: 2500 }, 'video-ad': { min: 3000, max: 8000 } },
   },
   {
     name: 'Amr Diab', name_ar: 'عمرو دياب', slug: 'amr-diab',
@@ -44,7 +44,7 @@ const CELEBRITIES = [
     is_active: true, is_featured: false, total_orders: 17,
     bio: 'Legend of Arabic pop music with over 30 years of hits.',
     bio_ar: 'أسطورة الموسيقى العربية مع أكثر من 30 عاماً من النجاحات.',
-    price_range: { greeting: { min: 600, max: 1800 }, 'avatar-studio': { min: 2000, max: 6000 }, 'full-body': { min: 6000, max: 15000 } },
+    price_range: { greeting: { min: 600, max: 1800 }, 'video-ad': { min: 2000, max: 6000 } },
   },
   {
     name: 'Nancy Ajram', name_ar: 'نانسي عجرم', slug: 'nancy-ajram',
@@ -56,7 +56,7 @@ const CELEBRITIES = [
     is_active: true, is_featured: false, total_orders: 12,
     bio: 'Lebanese pop star known throughout the Arab world.',
     bio_ar: 'نجمة البوب اللبنانية المعروفة في جميع أنحاء العالم العربي.',
-    price_range: { greeting: { min: 500, max: 1500 }, 'avatar-studio': { min: 1800, max: 5000 }, 'full-body': { min: 5000, max: 12000 } },
+    price_range: { greeting: { min: 500, max: 1500 }, 'video-ad': { min: 1800, max: 5000 } },
   },
   {
     name: 'MrBeast', name_ar: 'مستر بيست', slug: 'mrbeast',
@@ -68,7 +68,7 @@ const CELEBRITIES = [
     is_active: true, is_featured: false, total_orders: 9,
     bio: "World's most subscribed YouTuber with viral philanthropic content.",
     bio_ar: 'أكثر يوتيوبر اشتراكاً في العالم بمحتوى فيروسي.',
-    price_range: { greeting: { min: 800, max: 2500 }, 'avatar-studio': { min: 3000, max: 9000 }, 'full-body': { min: 9000, max: 25000 } },
+    price_range: { greeting: { min: 800, max: 2500 }, 'video-ad': { min: 3000, max: 9000 } },
   },
   {
     name: 'Haifa Wehbe', name_ar: 'هيفاء وهبي', slug: 'haifa-wehbe',
@@ -80,7 +80,7 @@ const CELEBRITIES = [
     is_active: false, is_featured: false, total_orders: 6,
     bio: 'Lebanese entertainment icon with a massive Middle East fanbase.',
     bio_ar: 'أيقونة الترفيه اللبنانية بقاعدة جماهيرية ضخمة في الشرق الأوسط.',
-    price_range: { greeting: { min: 400, max: 1200 }, 'avatar-studio': { min: 1500, max: 4000 }, 'full-body': { min: 4000, max: 10000 } },
+    price_range: { greeting: { min: 400, max: 1200 }, 'video-ad': { min: 1500, max: 4000 } },
   },
 ]
 
@@ -223,11 +223,11 @@ async function seed() {
   // 5. Leads
   const LEADS = [
     { userEmail: 'ahmed@gmail.com',  celebrity_name: 'Mohamed Salah',     product_type: 'greeting',      purpose: 'Brand campaign',          estimated_value: 4200,  status: 'new'         as const, source: 'book_call'    as const, phone: '+971501234567', company: 'Brand Co.'      },
-    { userEmail: 'sara@outlook.com', celebrity_name: 'Cristiano Ronaldo', product_type: 'full-body',     purpose: 'Global advertisement',    estimated_value: 18000, status: 'contacted'   as const, source: 'book_call'    as const, phone: '+966551234567', company: 'Digital Agency' },
-    { userEmail: 'khalid@co.sa',     celebrity_name: 'Amr Diab',          product_type: 'avatar-studio', purpose: 'Product launch',          estimated_value: 8500,  status: 'negotiating' as const, source: 'book_call'    as const, phone: '+966541234567', company: 'KSA Brands'     },
+    { userEmail: 'sara@outlook.com', celebrity_name: 'Cristiano Ronaldo', product_type: 'video-ad',      purpose: 'Global advertisement',    estimated_value: 18000, status: 'contacted'   as const, source: 'book_call'    as const, phone: '+966551234567', company: 'Digital Agency' },
+    { userEmail: 'khalid@co.sa',     celebrity_name: 'Amr Diab',          product_type: 'video-ad', purpose: 'Product launch',          estimated_value: 8500,  status: 'negotiating' as const, source: 'book_call'    as const, phone: '+966541234567', company: 'KSA Brands'     },
     { userEmail: 'layla@mkt.ae',     celebrity_name: 'Nancy Ajram',       product_type: 'greeting',      purpose: 'VIP birthday greeting',   estimated_value: 1500,  status: 'paid'        as const, source: 'book_call'    as const, phone: '+971551234567', company: 'Marketing Plus' },
     { userEmail: 'omar@brand.ae',    celebrity_name: 'MrBeast',           product_type: 'greeting',      purpose: 'Social media campaign',   estimated_value: 800,   status: 'closed'      as const, source: 'contact_form' as const, phone: '+971561234567', company: 'Event Masters'  },
-    { userEmail: 'noura@company.qa', celebrity_name: 'Haifa Wehbe',       product_type: 'avatar-studio', purpose: 'Corporate entertainment', estimated_value: 1200,  status: 'lost'        as const, source: 'book_call'    as const, phone: '+97451234567',  company: 'Qatar Ventures' },
+    { userEmail: 'noura@company.qa', celebrity_name: 'Haifa Wehbe',       product_type: 'video-ad', purpose: 'Corporate entertainment', estimated_value: 1200,  status: 'lost'        as const, source: 'book_call'    as const, phone: '+97451234567',  company: 'Qatar Ventures' },
   ]
 
   for (const l of LEADS) {
@@ -274,7 +274,7 @@ async function seed() {
       purpose: 'Holiday Greeting', purpose_ar: 'تهنئة موسمية',
       sample_script: `Ramadan Kareem, everyone! This holy month is a time for reflection, gratitude, and being close to the people we love. I'm wishing you and your entire family a blessed Ramadan filled with peace, joy, and countless blessings. Ramadan Mubarak!`,
       sample_script_ar: `رمضان كريم يا أصدقاء! هذا الشهر الكريم هو وقت للتأمل والامتنان والقرب من من نحبهم. أتمنى لكم ولعائلتكم رمضاناً مباركاً مليئاً بالسلام والبهجة والبركات. رمضان مبارك!`,
-      product_types: ['greeting', 'avatar-studio'], duration: '30s', is_active: true,
+      product_types: ['greeting', 'video-ad'], duration: '30s', is_active: true,
     },
     {
       name: 'Congratulations', name_ar: 'مبروك',
@@ -283,7 +283,7 @@ async function seed() {
       purpose: 'Congratulations', purpose_ar: 'تهنئة بالإنجاز',
       sample_script: `[Name], congratulations! What you've achieved is no small thing — it takes real dedication, hard work, and heart to get there. I'm proud of you and I know this is just the beginning of something incredible. Well done, and keep going!`,
       sample_script_ar: `[الاسم]، مبروك! ما حققته ليس أمراً بسيطاً — يتطلب تفانياً حقيقياً وعملاً دؤوباً وشجاعة للوصول إلى هنا. أنا فخور بك وأعلم أن هذه مجرد البداية لشيء رائع. أحسنت، واستمر في التقدم!`,
-      product_types: ['greeting', 'avatar-studio'], duration: '30s', is_active: true,
+      product_types: ['greeting', 'video-ad'], duration: '30s', is_active: true,
     },
     {
       name: 'Motivational Shoutout', name_ar: 'رسالة تحفيزية',
@@ -292,7 +292,7 @@ async function seed() {
       purpose: 'Motivation', purpose_ar: 'تحفيز وإلهام',
       sample_script: `Listen, [Name] — I need you to hear this: you are capable of more than you know. Every champion has been exactly where you are right now, doubting themselves, feeling the pressure. But the ones who make it are the ones who don't quit. Get up. Keep going. The world needs what only you can bring.`,
       sample_script_ar: `اسمعني يا [الاسم] — أحتاج منك أن تستمع لهذا: أنت قادر على أكثر مما تتخيل. كل بطل كان في مكانك تماماً، يشك في نفسه، يشعر بالضغط. لكن من ينجحون هم من لا يستسلمون. قم. استمر. العالم يحتاج ما لا يستطيع أحد تقديمه غيرك.`,
-      product_types: ['greeting', 'avatar-studio'], duration: '45s', is_active: true,
+      product_types: ['greeting', 'video-ad'], duration: '45s', is_active: true,
     },
     {
       name: 'Product Launch Announcement', name_ar: 'إطلاق منتج جديد',
@@ -301,7 +301,7 @@ async function seed() {
       purpose: 'Product Launch', purpose_ar: 'إطلاق منتج',
       sample_script: `I'm excited to tell you about something that's genuinely changing the game — [Product Name]. I've seen a lot of products come and go, but this one is different. It's built for people who want results, not excuses. I use it myself and the difference is real. Go check it out at [Website] — trust me, you won't regret it.`,
       sample_script_ar: `أنا متحمس لأخبركم عن شيء يغير قواعد اللعبة حقاً — [اسم المنتج]. رأيت الكثير من المنتجات تأتي وتذهب، لكن هذا مختلف. صُنع للأشخاص الذين يريدون نتائج حقيقية. أستخدمه بنفسي والفرق واضح. اذهب وتحقق منه على [الموقع] — ثق بي، لن تندم.`,
-      product_types: ['avatar-studio'], duration: '60s', is_active: true,
+      product_types: ['video-ad'], duration: '60s', is_active: true,
     },
     {
       name: 'Brand Endorsement', name_ar: 'تأييد علامة تجارية',
@@ -310,7 +310,7 @@ async function seed() {
       purpose: 'Business Intro', purpose_ar: 'تقديم تجاري',
       sample_script: `When it comes to [Brand Name], I don't just talk about it — I believe in it. They stand for quality, for excellence, and for the kind of standards that I hold myself to every single day. If you're looking for the best in [industry/category], look no further. [Brand Name] — this is the real deal.`,
       sample_script_ar: `عندما يتعلق الأمر بـ[اسم العلامة التجارية]، أنا لا أتحدث عنها فحسب — بل أؤمن بها. إنها تمثل الجودة والتميز والمعايير التي أحمل نفسي عليها كل يوم. إذا كنت تبحث عن الأفضل في [القطاع/الفئة]، لا تبحث أكثر. [اسم العلامة التجارية] — هذا هو الأصل.`,
-      product_types: ['avatar-studio'], duration: '45s', is_active: true,
+      product_types: ['video-ad'], duration: '45s', is_active: true,
     },
     {
       name: 'Wedding Congratulations', name_ar: 'تهنئة الزواج',
@@ -328,7 +328,7 @@ async function seed() {
       purpose: 'Business Intro', purpose_ar: 'تقديم عمل تجاري',
       sample_script: `Something exciting is happening — [Business Name] is officially open! I've seen what the team behind this has built and I'm telling you, it's something special. Whether you're looking for [product/service], this is the place to be. Come check it out, support [Name] and what they've worked so hard to create. Congratulations on the grand opening — this is just the beginning!`,
       sample_script_ar: `شيء مثير للاهتمام يحدث — [اسم العمل التجاري] افتتح رسمياً! رأيت ما بناه الفريق وراء هذا وأقول لكم إنه شيء مميز. سواء كنت تبحث عن [المنتج/الخدمة]، هذا هو المكان المناسب. تعالوا وتفقدوا وادعموا [الاسم] وما عمل بجد لإنشائه. مبروك على الافتتاح الرسمي — هذه مجرد البداية!`,
-      product_types: ['avatar-studio'], duration: '60s', is_active: true,
+      product_types: ['video-ad'], duration: '60s', is_active: true,
     },
     {
       name: 'Thank You Message', name_ar: 'رسالة شكر',
@@ -346,7 +346,7 @@ async function seed() {
       purpose: 'Shoutout', purpose_ar: 'تشجيع رياضي',
       sample_script: `[Team Name] — I'm talking to you. You've trained for this. You've sacrificed for this. Every early morning, every tough session, every moment of doubt — it all led to right now. Go out there and show the world what you're made of. Believe in each other. Fight for every second. Let's go — you've got this!`,
       sample_script_ar: `[اسم الفريق] — أتحدث إليكم. لقد تدربتم من أجل هذا. ضحيتم من أجل هذا. كل صباح مبكر، كل جلسة صعبة، كل لحظة شك — كل ذلك قاد إلى هذه اللحظة. اخرجوا وأروا العالم ما أنتم عليه. ثقوا ببعضكم. قاتلوا في كل ثانية. هيا — أنتم قادرون!`,
-      product_types: ['greeting', 'avatar-studio'], duration: '30s', is_active: true,
+      product_types: ['greeting', 'video-ad'], duration: '30s', is_active: true,
     },
     {
       name: 'Graduation Celebration', name_ar: 'احتفال بالتخرج',
@@ -364,7 +364,7 @@ async function seed() {
       purpose: 'Business Intro', purpose_ar: 'دعوة فعالية',
       sample_script: `I want to personally invite you to [Event Name], happening on [Date] in [Location]. This isn't just another event — it's where the biggest names in [industry] come together to share ideas, make connections, and shape the future. Don't miss your chance to be part of something historic. Register now at [Website] — I'll see you there.`,
       sample_script_ar: `أريد أن أدعوك شخصياً إلى [اسم الفعالية]، التي تقام في [التاريخ] في [الموقع]. هذه ليست مجرد فعالية عادية — إنها المكان الذي تجتمع فيه أكبر الأسماء في [القطاع] لتبادل الأفكار وبناء العلاقات وتشكيل المستقبل. لا تفوّت فرصتك للمشاركة في شيء تاريخي. سجّل الآن على [الموقع] — سأراك هناك.`,
-      product_types: ['avatar-studio'], duration: '60s', is_active: true,
+      product_types: ['video-ad'], duration: '60s', is_active: true,
     },
     {
       name: 'New Year Message', name_ar: 'رسالة رأس السنة',
@@ -373,7 +373,7 @@ async function seed() {
       purpose: 'Holiday Greeting', purpose_ar: 'تهنئة رأس السنة',
       sample_script: `Happy New Year! A brand new year means a brand new chapter — and this one is yours to write. Leave behind whatever held you back, carry forward everything that made you strong, and step into this year with confidence and courage. Make it count. Happy New Year — let's make this one unforgettable.`,
       sample_script_ar: `كل عام وأنتم بخير! عام جديد يعني فصلاً جديداً — وهذا الفصل لك لتكتبه. اترك خلفك ما أعاقك، واحمل معك كل ما جعلك أقوى، وادخل هذا العام بثقة وشجاعة. اجعله مميزاً. كل عام وأنتم بخير — لنجعل هذا العام لا يُنسى.`,
-      product_types: ['greeting', 'avatar-studio'], duration: '30s', is_active: true,
+      product_types: ['greeting', 'video-ad'], duration: '30s', is_active: true,
     },
   ]
 
@@ -403,7 +403,7 @@ async function seed() {
       is_active: true, order: 0,
     },
     {
-      slug: 'avatar-studio', name: 'Video Ad', name_ar: 'إعلانات المنتجات القصيرة',
+      slug: 'video-ad', name: 'Video Ad', name_ar: 'إعلان فيديو',
       description: 'Short celebrity Ad', description_ar: 'الرأس والكتفين',
       detail: 'Hyper-realistic video avatars ideal for ads, product launches, and official announcements.',
       detail_ar: 'أفاتارات فيديو فائقة الواقعية مثالية للإعلانات وإطلاق المنتجات والإعلانات الرسمية.',
@@ -414,19 +414,6 @@ async function seed() {
       video_prompt: 'Maintain a calm, authoritative, and professional manner. Smiling, friendly expression. Subtle eyebrow raise on key statements, natural hand movements.',
       gemini_system_prompt: 'You are a professional scene designer for celebrity product advertisement videos. Generate clean, modern, and brand-appropriate background scenes.',
       is_active: true, order: 1,
-    },
-    {
-      slug: 'full-body', name: 'Full-Body Digital Twin', name_ar: 'التوأم الرقمي للجسم الكامل',
-      description: 'Full body celebrity Ad', description_ar: 'الجسم الكامل + التقاط الحركة',
-      detail: 'Complete digital twin with natural body motion for large-scale campaigns and immersive experiences.',
-      detail_ar: 'توأم رقمي كامل مع حركة جسمية طبيعية للحملات الكبيرة والتجارب الغامرة.',
-      icon: '🧬', price_from: 899,
-      duration: 'Delivery in 7–14 business days', duration_ar: 'التسليم في غضون 7–14 يوم عمل',
-      use_cases: ['TV Commercials', 'Event Displays', 'Campaign Videos', 'Immersive Brand Experiences'],
-      use_cases_ar: ['إعلانات تلفزيونية', 'عروض الفعاليات', 'مقاطع فيديو الحملات', 'تجارب العلامة التجارية الغامرة'],
-      video_prompt: 'Full-body natural motion, high production value, cinematic quality. Confident posture, natural movement, dynamic presence.',
-      gemini_system_prompt: 'You are a cinematic scene designer for large-scale celebrity campaign videos. Generate high-production-value, cinematic background scenes suitable for TV commercials and major brand campaigns.',
-      is_active: false, order: 2,
     },
   ]
 

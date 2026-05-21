@@ -31,9 +31,8 @@ enum UserStatus {
 
 enum VideoJobProductType {
   greeting
-  avatar_studio @map("avatar-studio")
-  full_body     @map("full-body")
-  image_ad      @map("image-ad")
+  video_ad   @map("video-ad")
+  image_ad   @map("image-ad")
 }
 
 enum VideoJobStatus {
@@ -115,7 +114,7 @@ model Celebrity {
   training_audio_url String?
   is_active         Boolean  @default(true)
   is_featured       Boolean  @default(false)
-  price_range       Json     @default("{\"greeting\":{\"min\":500,\"max\":2000},\"avatar-studio\":{\"min\":2000,\"max\":8000},\"full-body\":{\"min\":6000,\"max\":20000}}")
+  price_range       Json     @default("{\"greeting\":{\"min\":500,\"max\":2000},\"video-ad\":{\"min\":2000,\"max\":8000}}")
   total_orders      Int      @default(0)
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
