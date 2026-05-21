@@ -292,7 +292,7 @@ async function seed() {
       purpose: 'Motivation', purpose_ar: 'تحفيز وإلهام',
       sample_script: `Listen, [Name] — I need you to hear this: you are capable of more than you know. Every champion has been exactly where you are right now, doubting themselves, feeling the pressure. But the ones who make it are the ones who don't quit. Get up. Keep going. The world needs what only you can bring.`,
       sample_script_ar: `اسمعني يا [الاسم] — أحتاج منك أن تستمع لهذا: أنت قادر على أكثر مما تتخيل. كل بطل كان في مكانك تماماً، يشك في نفسه، يشعر بالضغط. لكن من ينجحون هم من لا يستسلمون. قم. استمر. العالم يحتاج ما لا يستطيع أحد تقديمه غيرك.`,
-      product_types: ['greeting', 'avatar-studio', 'full-body'], duration: '45s', is_active: true,
+      product_types: ['greeting', 'avatar-studio'], duration: '45s', is_active: true,
     },
     {
       name: 'Product Launch Announcement', name_ar: 'إطلاق منتج جديد',
@@ -301,7 +301,7 @@ async function seed() {
       purpose: 'Product Launch', purpose_ar: 'إطلاق منتج',
       sample_script: `I'm excited to tell you about something that's genuinely changing the game — [Product Name]. I've seen a lot of products come and go, but this one is different. It's built for people who want results, not excuses. I use it myself and the difference is real. Go check it out at [Website] — trust me, you won't regret it.`,
       sample_script_ar: `أنا متحمس لأخبركم عن شيء يغير قواعد اللعبة حقاً — [اسم المنتج]. رأيت الكثير من المنتجات تأتي وتذهب، لكن هذا مختلف. صُنع للأشخاص الذين يريدون نتائج حقيقية. أستخدمه بنفسي والفرق واضح. اذهب وتحقق منه على [الموقع] — ثق بي، لن تندم.`,
-      product_types: ['avatar-studio', 'full-body'], duration: '60s', is_active: true,
+      product_types: ['avatar-studio'], duration: '60s', is_active: true,
     },
     {
       name: 'Brand Endorsement', name_ar: 'تأييد علامة تجارية',
@@ -310,7 +310,7 @@ async function seed() {
       purpose: 'Business Intro', purpose_ar: 'تقديم تجاري',
       sample_script: `When it comes to [Brand Name], I don't just talk about it — I believe in it. They stand for quality, for excellence, and for the kind of standards that I hold myself to every single day. If you're looking for the best in [industry/category], look no further. [Brand Name] — this is the real deal.`,
       sample_script_ar: `عندما يتعلق الأمر بـ[اسم العلامة التجارية]، أنا لا أتحدث عنها فحسب — بل أؤمن بها. إنها تمثل الجودة والتميز والمعايير التي أحمل نفسي عليها كل يوم. إذا كنت تبحث عن الأفضل في [القطاع/الفئة]، لا تبحث أكثر. [اسم العلامة التجارية] — هذا هو الأصل.`,
-      product_types: ['avatar-studio', 'full-body'], duration: '45s', is_active: true,
+      product_types: ['avatar-studio'], duration: '45s', is_active: true,
     },
     {
       name: 'Wedding Congratulations', name_ar: 'تهنئة الزواج',
@@ -328,7 +328,7 @@ async function seed() {
       purpose: 'Business Intro', purpose_ar: 'تقديم عمل تجاري',
       sample_script: `Something exciting is happening — [Business Name] is officially open! I've seen what the team behind this has built and I'm telling you, it's something special. Whether you're looking for [product/service], this is the place to be. Come check it out, support [Name] and what they've worked so hard to create. Congratulations on the grand opening — this is just the beginning!`,
       sample_script_ar: `شيء مثير للاهتمام يحدث — [اسم العمل التجاري] افتتح رسمياً! رأيت ما بناه الفريق وراء هذا وأقول لكم إنه شيء مميز. سواء كنت تبحث عن [المنتج/الخدمة]، هذا هو المكان المناسب. تعالوا وتفقدوا وادعموا [الاسم] وما عمل بجد لإنشائه. مبروك على الافتتاح الرسمي — هذه مجرد البداية!`,
-      product_types: ['avatar-studio', 'full-body'], duration: '60s', is_active: true,
+      product_types: ['avatar-studio'], duration: '60s', is_active: true,
     },
     {
       name: 'Thank You Message', name_ar: 'رسالة شكر',
@@ -364,7 +364,7 @@ async function seed() {
       purpose: 'Business Intro', purpose_ar: 'دعوة فعالية',
       sample_script: `I want to personally invite you to [Event Name], happening on [Date] in [Location]. This isn't just another event — it's where the biggest names in [industry] come together to share ideas, make connections, and shape the future. Don't miss your chance to be part of something historic. Register now at [Website] — I'll see you there.`,
       sample_script_ar: `أريد أن أدعوك شخصياً إلى [اسم الفعالية]، التي تقام في [التاريخ] في [الموقع]. هذه ليست مجرد فعالية عادية — إنها المكان الذي تجتمع فيه أكبر الأسماء في [القطاع] لتبادل الأفكار وبناء العلاقات وتشكيل المستقبل. لا تفوّت فرصتك للمشاركة في شيء تاريخي. سجّل الآن على [الموقع] — سأراك هناك.`,
-      product_types: ['avatar-studio', 'full-body'], duration: '60s', is_active: true,
+      product_types: ['avatar-studio'], duration: '60s', is_active: true,
     },
     {
       name: 'New Year Message', name_ar: 'رسالة رأس السنة',
@@ -390,7 +390,7 @@ async function seed() {
   // 7. Product Types
   const PRODUCT_TYPES = [
     {
-      slug: 'greeting', name: 'Celebrity Greetings', name_ar: 'تحيات المشاهير',
+      slug: 'greeting', name: 'Personal Greetings', name_ar: 'تحيات المشاهير',
       description: 'Personal occasions', description_ar: 'المناسبات الشخصية',
       detail: 'Personalized celebrity messages for birthdays, weddings, graduations, and heartfelt appreciations.',
       detail_ar: 'رسائل مشاهير شخصية لأعياد الميلاد والأعراس والتخرج وعبارات الامتنان.',
@@ -403,7 +403,7 @@ async function seed() {
       is_active: true, order: 0,
     },
     {
-      slug: 'avatar-studio', name: 'Short Product Ads', name_ar: 'إعلانات المنتجات القصيرة',
+      slug: 'avatar-studio', name: 'Video Ad', name_ar: 'إعلانات المنتجات القصيرة',
       description: 'Short celebrity Ad', description_ar: 'الرأس والكتفين',
       detail: 'Hyper-realistic video avatars ideal for ads, product launches, and official announcements.',
       detail_ar: 'أفاتارات فيديو فائقة الواقعية مثالية للإعلانات وإطلاق المنتجات والإعلانات الرسمية.',
@@ -426,14 +426,15 @@ async function seed() {
       use_cases_ar: ['إعلانات تلفزيونية', 'عروض الفعاليات', 'مقاطع فيديو الحملات', 'تجارب العلامة التجارية الغامرة'],
       video_prompt: 'Full-body natural motion, high production value, cinematic quality. Confident posture, natural movement, dynamic presence.',
       gemini_system_prompt: 'You are a cinematic scene designer for large-scale celebrity campaign videos. Generate high-production-value, cinematic background scenes suitable for TV commercials and major brand campaigns.',
-      is_active: true, order: 2,
+      is_active: false, order: 2,
     },
   ]
 
   for (const pt of PRODUCT_TYPES) {
     const existing = await prisma.productType.findUnique({ where: { slug: pt.slug } })
     if (existing) {
-      console.log(`[skip] Product type already exists: ${pt.slug}`)
+      await prisma.productType.update({ where: { slug: pt.slug }, data: { name: pt.name, is_active: pt.is_active } })
+      console.log(`[ok]   Product type updated: ${pt.slug}`)
     } else {
       await prisma.productType.create({ data: pt })
       console.log(`[ok]   Product type created: ${pt.slug}`)
