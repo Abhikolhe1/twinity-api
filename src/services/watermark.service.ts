@@ -59,8 +59,17 @@ async function getFontBase64(): Promise<string | null> {
 
 const ffmpegBin: string = (require('@ffmpeg-installer/ffmpeg') as { path: string }).path
 ffmpeg.setFfmpegPath(ffmpegBin)
-// Suppress fontconfig "Cannot load default config file" noise on Ubuntu
-process.env.FONTCONFIG_FILE = process.env.FONTCONFIG_FILE ?? '/dev/null'
+
+// Suppress "Cannot load default config file" fontconfig noise on Ubuntu.
+// /dev/null is invalid XML — write a minimal valid config to a temp file instead.
+if (!process.env.FONTCONFIG_FILE) {
+  try {
+    const fcFile = join(tmpdir(), 'twinity-fonts.conf')
+    const { writeFileSync } = require('fs') as typeof import('fs')
+    writeFileSync(fcFile, '<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig></fontconfig>')
+    process.env.FONTCONFIG_FILE = fcFile
+  } catch { /* non-fatal — warning will still appear but won't break anything */ }
+}
 
 // ── Watermark PNG ─────────────────────────────────────────────────────────────
 

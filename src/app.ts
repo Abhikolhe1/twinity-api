@@ -21,6 +21,10 @@ import imageAdRoutes      from './routes/imageAd.routes'
 
 const app = express()
 
+// Trust the first proxy (Nginx/load-balancer) so X-Forwarded-For is read correctly
+// Required for express-rate-limit to identify real client IPs behind a reverse proxy
+app.set('trust proxy', 1)
+
 // ── Security ──────────────────────────────────────────────
 app.use(helmet())
 const allowedOrigins = [env.cors.clientUrl, env.cors.adminUrl]
