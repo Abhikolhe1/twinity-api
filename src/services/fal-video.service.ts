@@ -72,11 +72,15 @@ export async function submitSeedanceVideo(params: {
     body.audio_urls     = [params.audioUrl]
     body.generate_audio = false
   } else {
-    body.generate_audio = 'fast'
+    body.generate_audio = false
   }
-  if (params.callbackUrl) body.fal_webhook = params.callbackUrl
 
-  const res = await fetch(`${FAL_QUEUE_BASE}/${SEEDANCE_ENDPOINT}`, {
+  // Pass webhook as a query parameter — keeps it separate from model inputs
+  const submitUrl = params.callbackUrl
+    ? `${FAL_QUEUE_BASE}/${SEEDANCE_ENDPOINT}?fal_webhook=${encodeURIComponent(params.callbackUrl)}`
+    : `${FAL_QUEUE_BASE}/${SEEDANCE_ENDPOINT}`
+
+  const res = await fetch(submitUrl, {
     method: 'POST',
     headers: { 'Authorization': `Key ${falApiKey}`, 'Content-Type': 'application/json' },
     body:    JSON.stringify(body),
