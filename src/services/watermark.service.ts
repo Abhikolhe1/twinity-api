@@ -99,8 +99,6 @@ function buildDrawtextFilter(text: string, opacity: number, position: string, fo
       ? `w-text_w-${pad}`
       : `(w-text_w)/2`
 
-  const borderOpacity = Math.min(1, opacity + 0.3).toFixed(2)
-
   const filters = lines.map((line, i) => {
     const escaped = escapeDrawtext(line)
 
@@ -115,13 +113,15 @@ function buildDrawtextFilter(text: string, opacity: number, position: string, fo
       yExpr = `${pad + i * lineHeight}`
     }
 
+    // alpha= applies uniformly to fill + border — fontcolor@X only affects fill
+    // which made the setting appear to have no effect because the border stayed opaque
     return [
       `drawtext=${fontPart}`,
       `text='${escaped}':`,
       `fontsize=${fontSize}:`,
-      `fontcolor=white@${opacity.toFixed(2)}:`,
-      `x=${xExpr}:y=${yExpr}:`,
-      `borderw=2:bordercolor=black@${borderOpacity}`,
+      `fontcolor=white:borderw=2:bordercolor=black:`,
+      `alpha=${opacity.toFixed(2)}:`,
+      `x=${xExpr}:y=${yExpr}`,
     ].join('')
   })
 
@@ -138,7 +138,7 @@ interface WatermarkResult {
 async function applyWatermark(videoUrl: string, referenceId: string): Promise<WatermarkResult> {
   const settings = await settingsService.get()
   const text     = settings.watermarkText     || 'twinity.ai PREVIEW'
-  const opacity  = Math.min(1, Math.max(0.2, parseFloat(settings.watermarkOpacity || '0.70')))
+  const opacity  = Math.min(1, Math.max(0, parseFloat(settings.watermarkOpacity || '0.70')))
   const position = settings.watermarkPosition || 'Bottom Center'
 
   logger.info(`[Watermark] Starting: job=${referenceId}, position=${position}, opacity=${opacity}`)
