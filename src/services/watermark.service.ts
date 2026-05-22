@@ -33,19 +33,34 @@ import { s3Service } from './s3.service'
 import { settingsService } from './settings.service'
 import { logger } from '../config/logger'
 
-// Bundled Inter Bold (700) — no system fonts required on the server
-const FONT_PATH = join(__dirname, '../../public/fonts/Inter-Regular.woff2')
+// Try multiple paths — handles both ts-node (src/) and compiled (dist/) layouts
+const FONT_CANDIDATES = [
+  join(__dirname, '../../public/fonts/Inter-Regular.woff2'),  // dist/services → project root
+  join(__dirname, '../../../public/fonts/Inter-Regular.woff2'), // extra level if nested
+  join(process.cwd(), 'public/fonts/Inter-Regular.woff2'),    // cwd fallback
+]
 let _fontBase64: string | null = null
-async function getFontBase64(): Promise<string> {
-  if (!_fontBase64) {
-    const buf = await readFile(FONT_PATH)
-    _fontBase64 = buf.toString('base64')
+async function getFontBase64(): Promise<string | null> {
+  if (_fontBase64 !== null) return _fontBase64
+  for (const p of FONT_CANDIDATES) {
+    try {
+      const buf = await readFile(p)
+      _fontBase64 = buf.toString('base64')
+      logger.info(`[Watermark] Font loaded from: ${p}`)
+      return _fontBase64
+    } catch {
+      // try next candidate
+    }
   }
+  logger.warn('[Watermark] Inter-Regular.woff2 not found — watermark will use server default font')
+  _fontBase64 = ''
   return _fontBase64
 }
 
 const ffmpegBin: string = (require('@ffmpeg-installer/ffmpeg') as { path: string }).path
 ffmpeg.setFfmpegPath(ffmpegBin)
+// Suppress fontconfig "Cannot load default config file" noise on Ubuntu
+process.env.FONTCONFIG_FILE = process.env.FONTCONFIG_FILE ?? '/dev/null'
 
 // ── Watermark PNG ─────────────────────────────────────────────────────────────
 
@@ -68,21 +83,21 @@ async function buildWatermarkPng(text: string, opacity: number): Promise<Buffer>
   const svgLines = lines.map((line, i) => {
     const y = padY + (i + 1) * lineHeight - 4
     return [
-      `<text x="${padX + 1}" y="${y + 1}" font-family="Inter" font-size="${fontSize}"`,
+      `<text x="${padX + 1}" y="${y + 1}" font-family="Inter,sans-serif" font-size="${fontSize}"`,
       `  font-weight="normal" fill="black" fill-opacity="${(opacity * 0.6).toFixed(2)}">${escapeXml(line)}</text>`,
-      `<text x="${padX}" y="${y}" font-family="Inter" font-size="${fontSize}"`,
+      `<text x="${padX}" y="${y}" font-family="Inter,sans-serif" font-size="${fontSize}"`,
       `  font-weight="normal" fill="white" fill-opacity="${opacity.toFixed(2)}">${escapeXml(line)}</text>`,
     ].join('\n')
   }).join('\n')
 
+  const fontFaceBlock = fontBase64
+    ? `@font-face { font-family: 'Inter'; font-weight: 400; src: url('data:font/woff2;base64,${fontBase64}') format('woff2'); }`
+    : ''
+
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
   <defs>
     <style>
-      @font-face {
-        font-family: 'Inter';
-        font-weight: 400;
-        src: url('data:font/woff2;base64,${fontBase64}') format('woff2');
-      }
+      ${fontFaceBlock}
     </style>
   </defs>
   ${svgLines}
