@@ -33,28 +33,35 @@ import { s3Service } from './s3.service'
 import { settingsService } from './settings.service'
 import { logger } from '../config/logger'
 
-// Try multiple paths — handles both ts-node (src/) and compiled (dist/) layouts
-const FONT_CANDIDATES = [
-  join(__dirname, '../../public/fonts/Inter-Regular.woff2'),  // dist/services → project root
-  join(__dirname, '../../../public/fonts/Inter-Regular.woff2'), // extra level if nested
-  join(process.cwd(), 'public/fonts/Inter-Regular.woff2'),    // cwd fallback
+// librsvg (used by sharp) supports TTF/OTF but NOT WOFF2 on most Ubuntu installs.
+// Prefer TTF system fonts → OTF project fonts → skip embedding (renders with system default).
+interface FontResult { base64: string; format: string }
+let _font: FontResult | null | false = undefined as any // undefined = not loaded yet
+
+const FONT_CANDIDATES: Array<{ path: string; format: string }> = [
+  // System TTF fonts — present on Ubuntu when fontconfig / fonts-dejavu-core is installed
+  { path: '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',               format: 'truetype' },
+  { path: '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf', format: 'truetype' },
+  { path: '/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf',                  format: 'truetype' },
+  { path: '/usr/share/fonts/truetype/freefont/FreeSans.ttf',                format: 'truetype' },
+  // Project OTF fonts (if copied into public/fonts — OTF works with librsvg)
+  { path: join(process.cwd(), 'public/fonts/AeonikProTRIAL-Regular.otf'),   format: 'opentype' },
+  { path: join(__dirname, '../../public/fonts/AeonikProTRIAL-Regular.otf'), format: 'opentype' },
 ]
-let _fontBase64: string | null = null
-async function getFontBase64(): Promise<string | null> {
-  if (_fontBase64 !== null) return _fontBase64
-  for (const p of FONT_CANDIDATES) {
+
+async function getFont(): Promise<FontResult | null> {
+  if (_font !== (undefined as any)) return _font as FontResult | null
+  for (const { path, format } of FONT_CANDIDATES) {
     try {
-      const buf = await readFile(p)
-      _fontBase64 = buf.toString('base64')
-      logger.info(`[Watermark] Font loaded from: ${p}`)
-      return _fontBase64
-    } catch {
-      // try next candidate
-    }
+      const buf = await readFile(path)
+      _font = { base64: buf.toString('base64'), format }
+      logger.info(`[Watermark] Font loaded: ${path} (${format})`)
+      return _font
+    } catch { /* try next */ }
   }
-  logger.warn('[Watermark] Inter-Regular.woff2 not found — watermark will use server default font')
-  _fontBase64 = ''
-  return _fontBase64
+  logger.warn('[Watermark] No usable TTF/OTF font found — text may render as boxes on minimal Ubuntu. Run: apt-get install -y fonts-liberation')
+  _font = null
+  return null
 }
 
 const ffmpegBin: string = (require('@ffmpeg-installer/ffmpeg') as { path: string }).path
@@ -87,20 +94,23 @@ async function buildWatermarkPng(text: string, opacity: number): Promise<Buffer>
   const width      = Math.ceil(maxLen * fontSize * 0.58) + padX * 2 + 20
   const height     = lines.length * lineHeight + padY * 2
 
-  const fontBase64 = await getFontBase64()
+  const font = await getFont()
+  const fontFamily = font ? 'WatermarkFont,sans-serif' : 'sans-serif'
 
   const svgLines = lines.map((line, i) => {
     const y = padY + (i + 1) * lineHeight - 4
     return [
-      `<text x="${padX + 1}" y="${y + 1}" font-family="Inter,sans-serif" font-size="${fontSize}"`,
+      `<text x="${padX + 1}" y="${y + 1}" font-family="${fontFamily}" font-size="${fontSize}"`,
       `  font-weight="normal" fill="black" fill-opacity="${(opacity * 0.6).toFixed(2)}">${escapeXml(line)}</text>`,
-      `<text x="${padX}" y="${y}" font-family="Inter,sans-serif" font-size="${fontSize}"`,
+      `<text x="${padX}" y="${y}" font-family="${fontFamily}" font-size="${fontSize}"`,
       `  font-weight="normal" fill="white" fill-opacity="${opacity.toFixed(2)}">${escapeXml(line)}</text>`,
     ].join('\n')
   }).join('\n')
 
-  const fontFaceBlock = fontBase64
-    ? `@font-face { font-family: 'Inter'; font-weight: 400; src: url('data:font/woff2;base64,${fontBase64}') format('woff2'); }`
+  // librsvg supports truetype (TTF) and opentype (OTF) but NOT woff2.
+  // Use the correct MIME type and format() hint so the @font-face is parsed correctly.
+  const fontFaceBlock = font
+    ? `@font-face { font-family: 'WatermarkFont'; font-weight: 400; src: url('data:font/${font.format === 'truetype' ? 'ttf' : 'otf'};base64,${font.base64}') format('${font.format}'); }`
     : ''
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
