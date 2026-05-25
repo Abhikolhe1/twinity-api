@@ -7,7 +7,7 @@
  *
  * Stub mode: both providers stub gracefully when credentials are absent.
  */
-import { Prisma, VideoJobProductType } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { logger } from '../config/logger'
 import prisma from '../lib/prisma'
 import { aiService } from './ai.service'
@@ -168,7 +168,7 @@ async function processJob(jobId: string): Promise<void> {
   await prisma.videoJob.update({ where: { id: jobId }, data: { status: 'in_progress', status_history: inProgressHistory } })
   logger.info(`[Queue] Job ${job.reference_id} (${job.product_type}) → in-progress`)
 
-  if (job.product_type === VideoJobProductType.video_ad) {
+  if ((job.product_type as string) === 'video_ad') {
     await processVideoAdJob(jobId, job)
   } else {
     // greeting (and any unrecognised type) → Creatify Aurora
