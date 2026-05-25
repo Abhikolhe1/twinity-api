@@ -2,9 +2,8 @@ import { Response, NextFunction } from 'express'
 import prisma from '../lib/prisma'
 import { AppError } from '../middleware/errorHandler'
 import { AuthRequest } from '../middleware/auth'
-import { falVideoService } from '../services/fal-video.service'
-import { s3Service } from '../services/s3.service'
-import { env } from '../config/env'
+import { generateGeminiImage } from '../services/gemini-image.service'
+import { settingsService } from '../services/settings.service'
 import { logger } from '../config/logger'
 
 function generateRef(): string {
@@ -13,12 +12,11 @@ function generateRef(): string {
   return `TWN-${year}-${seq}`
 }
 
-export async function generateVideoAd(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+export async function generateImageAd(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const {
       celebrityId,
       prompt,
-      style,
       aspectRatio,
       channels,
       duration,
@@ -33,8 +31,6 @@ export async function generateVideoAd(req: AuthRequest, res: Response, next: Nex
     const celeb = await prisma.celebrity.findUnique({ where: { id: celebrityId } })
     if (!celeb || !celeb.is_active) throw new AppError('Celebrity not found or inactive', 404)
 
-    if (!celeb.thumbnail_url) throw new AppError('Celebrity has no photo — upload one via the admin panel', 422)
-
     const referenceId = generateRef()
 
     const job = await prisma.videoJob.create({
@@ -43,51 +39,68 @@ export async function generateVideoAd(req: AuthRequest, res: Response, next: Nex
         user_id:         req.userId!,
         celebrity_id:    celebrityId,
         product_type:    'image_ad',
-        purpose:         'video-ad',
+        purpose:         'image-ad',
         script:          (prompt as string).trim(),
-        aspect_ratio:    aspectRatio || '16:9',
-        channels:        channels    || [],
-        scene_notes:     [(prompt as string).trim(), style ? `Style: ${style}` : ''].filter(Boolean).join('. '),
+        aspect_ratio:    aspectRatio    || '16:9',
+        channels:        channels       || [],
+        scene_notes:     [
+          (prompt as string).trim(),
+          duration    ? `License duration: ${duration}` : '',
+          territory   ? `Territory: ${territory}` : '',
+          exclusivity ? `Exclusivity: ${exclusivity}` : '',
+        ].filter(Boolean).join('. '),
         estimated_price: typeof estimatedPrice === 'number' ? estimatedPrice : 0,
         currency:        'SAR',
         status:          'in_progress',
         status_history:  [
           { status: 'pending',     timestamp: new Date().toISOString() },
-          { status: 'in-progress', timestamp: new Date().toISOString(), note: 'Seedance 2.0 video generation started' },
+          { status: 'in-progress', timestamp: new Date().toISOString(), note: 'Gemini image generation started' },
         ],
       },
     })
 
-    const imageUrl = (await s3Service.presignIfS3Short(celeb.thumbnail_url, 7200)) ?? celeb.thumbnail_url
-    const callbackUrl = env.serverUrl ? `${env.serverUrl}/api/webhooks/fal` : undefined
-    const videoPrompt = [
-      (prompt as string).trim(),
-      style ? `Visual style: ${style}` : '',
-      duration   ? `License duration: ${duration}` : '',
-      territory  ? `Territory: ${territory}` : '',
-      exclusivity ? 'Exclusive usage rights' : '',
-    ].filter(Boolean).join('. ')
+    // Build the image generation prompt — do not include real person names;
+    // Gemini's image model refuses to depict named real people.
+    const imagePrompt = [
+      `Generate a professional high-end advertising image for a brand campaign.`,
+      `Campaign brief: ${(prompt as string).trim()}`,
+      `Style: commercial photography, editorial quality, premium brand aesthetic.`,
+      aspectRatio ? `Target aspect ratio: ${aspectRatio}.` : '',
+    ].filter(Boolean).join(' ')
 
-    falVideoService.submit({ imageUrl, referenceId, callbackUrl, videoPrompt })
-      .then(result => {
-        logger.info(`[ImageAd] Seedance submitted for ${referenceId}: requestId=${result.requestId}`)
-        return prisma.videoJob.update({
+    const { s3Bucket } = await settingsService.get()
+
+    // Fire-and-forget: generate image and advance job to review
+    generateGeminiImage({ prompt: imagePrompt, referenceId, s3Bucket })
+      .then(async (result) => {
+        await prisma.videoJob.update({
           where: { id: job.id },
-          data:  { creatify_job_id: result.requestId },
+          data:  {
+            status:          'review',
+            preview_url:     result.imageUrl,
+            watermarked_url: result.imageUrl,
+            final_video_url: result.imageUrl,
+            status_history:  [
+              { status: 'pending',     timestamp: new Date(job.created_at).toISOString() },
+              { status: 'in-progress', timestamp: new Date().toISOString(), note: 'Gemini image generation started' },
+              { status: 'review',      timestamp: new Date().toISOString(), note: result.status === 'stub' ? 'Stub image — ready for CS review' : 'Gemini image generated — pending CS review' },
+            ],
+          },
         })
+        logger.info(`[ImageAd] Job ${referenceId} → review (${result.status})`)
       })
-      .catch(err => {
-        logger.error(`[ImageAd] Seedance submit failed for ${referenceId}:`, err)
-        prisma.videoJob.update({
+      .catch(async (err) => {
+        logger.error(`[ImageAd] Gemini generation failed for ${referenceId}:`, err)
+        await prisma.videoJob.update({
           where: { id: job.id },
-          data:  { status: 'failed', error_message: err?.message ?? 'Seedance submission failed' },
-        }).catch(() => null)
+          data:  { status: 'failed', error_message: err?.message ?? 'Gemini image generation failed' },
+        })
       })
 
     res.status(201).json({
       success:     true,
       referenceId: job.reference_id,
-      message:     'Video ad generation started — check My Requests for status updates',
+      message:     'Image ad generation started — check My Requests for status updates',
     })
 
   } catch (err) {

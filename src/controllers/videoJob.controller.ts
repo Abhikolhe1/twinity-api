@@ -592,9 +592,14 @@ export async function getJobDownloadUrl(req: AuthRequest, res: Response, next: N
     const upstream = await fetch(fetchUrl)
     if (!upstream.ok) throw new AppError('Could not retrieve video file', 502)
 
-    const filename = `${job.reference_id}.mp4`
+    const contentType = upstream.headers.get('content-type') ?? 'video/mp4'
+    const ext = contentType === 'image/jpeg' ? 'jpg'
+              : contentType === 'image/png'  ? 'png'
+              : contentType === 'image/webp' ? 'webp'
+              : 'mp4'
+    const filename = `${job.reference_id}.${ext}`
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
-    res.setHeader('Content-Type', upstream.headers.get('content-type') ?? 'video/mp4')
+    res.setHeader('Content-Type', contentType)
     const contentLength = upstream.headers.get('content-length')
     if (contentLength) res.setHeader('Content-Length', contentLength)
 
