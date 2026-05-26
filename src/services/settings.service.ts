@@ -18,6 +18,7 @@ interface CachedSettings {
   watermarkText: string
   watermarkOpacity: string
   watermarkPosition: string
+  watermarkImageUrl: string
   platformName: string
   adminEmail: string
   awsAccessKeyId: string
@@ -48,10 +49,11 @@ async function load(): Promise<CachedSettings> {
       falApiKey:      d.fal_api_key      || env.externalApis.falApiKey      || '',
       openaiKey:      d.openai_key       || env.externalApis.openai         || '',
       geminiApiKey:   d.gemini_api_key   || '',
-      watermarkText:     d.watermark_text     || 'twinity.ai · PREVIEW',
-      watermarkOpacity:  d.watermark_opacity  || '0.35',
-      watermarkPosition: d.watermark_position || 'Bottom Center',
-      platformName:      d.platform_name      || 'Twinity',
+      watermarkText:     d.watermark_text      || 'twinity.ai · PREVIEW',
+      watermarkOpacity:  d.watermark_opacity   || '0.35',
+      watermarkPosition: d.watermark_position  || 'Bottom Center',
+      watermarkImageUrl: d.watermark_image_url || '',
+      platformName:      d.platform_name       || 'Twinity',
       adminEmail:        d.admin_email        || env.ses.adminEmail,
       awsAccessKeyId:     d.aws_access_key_id     || env.aws.accessKeyId     || '',
       awsSecretAccessKey: d.aws_secret_access_key || env.aws.secretAccessKey || '',
@@ -74,6 +76,7 @@ async function load(): Promise<CachedSettings> {
       watermarkText:     'twinity.ai · PREVIEW',
       watermarkOpacity:  '0.35',
       watermarkPosition: 'Bottom Center',
+      watermarkImageUrl: '',
       platformName:      'Twinity',
       adminEmail:        env.ses.adminEmail,
       awsAccessKeyId:     env.aws.accessKeyId     || '',

@@ -1,13 +1,14 @@
 /**
- * Watermark Service — bakes a text watermark into a video.
+ * Watermark Service — bakes a watermark into a video.
  *
- * Approach:
- *   ffmpeg drawtext filter — uses ffmpeg's built-in FreeType renderer.
- *   No dependency on sharp/librsvg/fontconfig (the prior PNG-overlay approach
- *   silently produced transparent PNGs when system fonts were absent).
+ * Mode A (image): when watermarkImageUrl is set in Settings, downloads the
+ *   image and composites it via ffmpeg overlay filter at the configured position.
+ *
+ * Mode B (text fallback): uses ffmpeg drawtext filter when no image is configured.
  *
  * Settings consumed (from Settings DB):
- *   watermarkText     — e.g. "twinity.ai PREVIEW"
+ *   watermarkImageUrl — URL of the watermark PNG/JPG (Mode A)
+ *   watermarkText     — e.g. "twinity.ai PREVIEW" (Mode B fallback)
  *   watermarkOpacity  — 0.0–1.0
  *   watermarkPosition — "Bottom Center" | "Bottom Left" | "Bottom Right" |
  *                       "Top Left" | "Top Center" | "Top Right" | "Center"
@@ -128,6 +129,33 @@ function buildDrawtextFilter(text: string, opacity: number, position: string, fo
   return filters.join(',')
 }
 
+// ── Image overlay helpers ─────────────────────────────────────────────────────
+
+function buildOverlayFilter(opacity: number, position: string): string {
+  const pad = 24
+  let x: string
+  let y: string
+
+  if (position.includes('Left'))        x = `${pad}`
+  else if (position.includes('Right'))  x = `main_w-overlay_w-${pad}`
+  else                                  x = `(main_w-overlay_w)/2`
+
+  if (position.startsWith('Top'))       y = `${pad}`
+  else if (position === 'Center')       y = `(main_h-overlay_h)/2`
+  else                                  y = `main_h-overlay_h-${pad}`
+
+  // Scale the watermark to at most 25% of video width, preserve aspect ratio
+  // Then apply opacity via colorchannelmixer (alpha channel scale)
+  const alphaVal = opacity.toFixed(4)
+  return [
+    `[1:v]scale=iw*min(W*0.25/iw\\,1):ih*min(W*0.25/iw\\,1),`,
+    `format=rgba,`,
+    `colorchannelmixer=aa=${alphaVal}`,
+    `[wm];`,
+    `[0:v][wm]overlay=${x}:${y}`,
+  ].join('')
+}
+
 // ── Core watermarking ─────────────────────────────────────────────────────────
 
 interface WatermarkResult {
@@ -136,12 +164,12 @@ interface WatermarkResult {
 }
 
 async function applyWatermark(videoUrl: string, referenceId: string): Promise<WatermarkResult> {
-  const settings = await settingsService.get()
-  const text     = settings.watermarkText     || 'twinity.ai PREVIEW'
-  const opacity  = Math.min(1, Math.max(0, parseFloat(settings.watermarkOpacity || '0.70')))
-  const position = settings.watermarkPosition || 'Bottom Center'
+  const settings       = await settingsService.get()
+  const opacity        = Math.min(1, Math.max(0, parseFloat(settings.watermarkOpacity || '0.70')))
+  const position       = settings.watermarkPosition || 'Bottom Center'
+  const watermarkImage = settings.watermarkImageUrl || ''
 
-  logger.info(`[Watermark] Starting: job=${referenceId}, position=${position}, opacity=${opacity}`)
+  logger.info(`[Watermark] Starting: job=${referenceId}, mode=${watermarkImage ? 'image' : 'text'}, position=${position}, opacity=${opacity}`)
 
   const videoRes = await fetch(videoUrl)
   if (!videoRes.ok) throw new Error(`Failed to download video (HTTP ${videoRes.status})`)
@@ -150,28 +178,45 @@ async function applyWatermark(videoUrl: string, referenceId: string): Promise<Wa
   const uid        = randomUUID()
   const inputPath  = join(tmpdir(), `tw-${uid}-in.mp4`)
   const outputPath = join(tmpdir(), `tw-${uid}-out.mp4`)
+  const imagePath  = watermarkImage ? join(tmpdir(), `tw-${uid}-wm.png`) : null
 
   try {
     await writeFile(inputPath, videoBuffer)
 
-    const font     = await getFont()
-    const vfFilter = buildDrawtextFilter(text, opacity, position, font?.path ?? null)
-    logger.info(`[Watermark] drawtext filter: ${vfFilter}`)
+    if (imagePath && watermarkImage) {
+      const imgRes = await fetch(watermarkImage)
+      if (!imgRes.ok) throw new Error(`Failed to download watermark image (HTTP ${imgRes.status})`)
+      await writeFile(imagePath, Buffer.from(await imgRes.arrayBuffer()))
+    }
+
+    // Resolve font before entering the ffmpeg Promise (getFont is async)
+    const resolvedFont = imagePath ? null : await getFont()
 
     await new Promise<void>((resolve, reject) => {
-      ffmpeg(inputPath)
-        .videoFilters(vfFilter)
-        .outputOptions([
-          '-c:a copy',
-          '-movflags +faststart',
-        ])
+      const cmd = ffmpeg(inputPath)
+
+      if (imagePath) {
+        const overlayFilter = buildOverlayFilter(opacity, position)
+        logger.info(`[Watermark] overlay filter: ${overlayFilter}`)
+        cmd
+          .input(imagePath)
+          .complexFilter(overlayFilter)
+      } else {
+        const text     = settings.watermarkText || 'twinity.ai PREVIEW'
+        const vfFilter = buildDrawtextFilter(text, opacity, position, resolvedFont?.path ?? null)
+        logger.info(`[Watermark] drawtext filter: ${vfFilter}`)
+        cmd.videoFilters(vfFilter)
+      }
+
+      cmd
+        .outputOptions(['-c:a copy', '-movflags +faststart'])
         .save(outputPath)
         .on('end', () => resolve())
         .on('error', (err: Error) => reject(err))
     })
 
-    const outBuffer       = await readFile(outputPath)
-    const { s3Bucket }    = await settingsService.get()
+    const outBuffer    = await readFile(outputPath)
+    const { s3Bucket } = await settingsService.get()
 
     const [cleanUpload, watermarkedUpload] = await Promise.all([
       s3Service.upload(s3Bucket, `jobs/${referenceId}/original.mp4`,            videoBuffer, 'video/mp4'),
@@ -189,6 +234,7 @@ async function applyWatermark(videoUrl: string, referenceId: string): Promise<Wa
     await Promise.all([
       unlink(inputPath).catch(() => null),
       unlink(outputPath).catch(() => null),
+      imagePath ? unlink(imagePath).catch(() => null) : Promise.resolve(),
     ])
   }
 }

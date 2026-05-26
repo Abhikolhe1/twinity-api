@@ -59,13 +59,15 @@ export async function generateImageAd(req: AuthRequest, res: Response, next: Nex
       },
     })
 
-    // Build the image generation prompt — do not include real person names;
-    // Gemini's image model refuses to depict named real people.
+    // Gemini blocks prompts that reference real people or include their photos.
+    // Generate a background scene / environment image — no people, no faces.
+    // The celebrity photo is shown alongside it in the UI.
     const imagePrompt = [
-      `Generate a professional high-end advertising image for a brand campaign.`,
+      `Create a high-end advertising background scene for a brand campaign.`,
+      `The image must contain NO people, NO faces, and NO human figures.`,
       `Campaign brief: ${(prompt as string).trim()}`,
-      `Style: commercial photography, editorial quality, premium brand aesthetic.`,
-      aspectRatio ? `Target aspect ratio: ${aspectRatio}.` : '',
+      `Style: premium brand advertising, cinematic product photography, bold atmospheric composition.`,
+      aspectRatio ? `Aspect ratio: ${aspectRatio}.` : '',
     ].filter(Boolean).join(' ')
 
     const { s3Bucket } = await settingsService.get()

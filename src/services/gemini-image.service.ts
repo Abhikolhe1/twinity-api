@@ -4,6 +4,10 @@
  * Model: gemini-3.1-flash-image-preview
  * Auth:  API key from settings DB (gemini_api_key) — no env var equivalent.
  *
+ * Note: Gemini blocks requests that include real person photos (deepfake
+ * prevention) and refuses named-person prompts. Image ads are therefore
+ * generated from the campaign brief text alone.
+ *
  * Stub mode: when gemini_api_key is absent, returns a placeholder URL immediately.
  */
 import { logger } from '../config/logger'
@@ -42,10 +46,8 @@ export async function generateGeminiImage(params: {
   const body = {
     contents: [
       {
-        parts: [
-          { text: params.prompt }
-        ]
-      }
+        parts: [{ text: params.prompt }],
+      },
     ],
     generationConfig: {
       responseModalities: ['TEXT', 'IMAGE'],
