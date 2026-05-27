@@ -10,6 +10,12 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin@1234'
 const ADMIN_NAME     = process.env.ADMIN_NAME     || 'Super Admin'
 const CLIENT_URL     = process.env.CLIENT_URL     || 'http://localhost:3000'
 
+const CELEBRITY_PORTAL_ROLE = {
+  name: 'celebrity_portal',
+  description: 'Restricted portal access for approved celebrity accounts.',
+  permissions: ['celebrity.profile.view', 'celebrity.profile.update', 'celebrity.orders.view'],
+}
+
 const CELEBRITIES = [
   {
     name: 'Cristiano Ronaldo', name_ar: 'كريستيانو رونالدو', slug: 'cristiano-ronaldo',
@@ -108,6 +114,23 @@ async function seed() {
       data: { name: ADMIN_NAME, email: ADMIN_EMAIL, password: hashedPw, role: 'super_admin', is_active: true },
     })
     console.log(`[ok]   Super Admin created: ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`)
+  }
+
+  const existingCelebrityRole = await prisma.role.findFirst({
+    where: { name: { equals: CELEBRITY_PORTAL_ROLE.name, mode: 'insensitive' } },
+  })
+  if (existingCelebrityRole) {
+    console.log(`[skip] Role already exists: ${CELEBRITY_PORTAL_ROLE.name}`)
+  } else {
+    const superAdmin = await prisma.admin.findUnique({ where: { email: ADMIN_EMAIL } })
+    await prisma.role.create({
+      data: {
+        ...CELEBRITY_PORTAL_ROLE,
+        is_system: true,
+        created_by: superAdmin?.id,
+      },
+    })
+    console.log(`[ok]   Role created: ${CELEBRITY_PORTAL_ROLE.name}`)
   }
 
   // 2. Celebrities

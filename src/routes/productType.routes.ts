@@ -12,7 +12,7 @@ import { requireAdmin, requirePermission } from '../middleware/adminAuth'
 const router = Router()
 
 // Admin must come before /:slug to avoid slug-matching 'admin'
-router.get('/admin', requireAdmin, adminListProductTypes)
+router.get('/admin', requireAdmin, requirePermission('settings.view'), adminListProductTypes)
 
 // Public — used by the customer wizard (prompts excluded)
 router.get('/', listProductTypes)

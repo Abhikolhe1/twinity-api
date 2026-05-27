@@ -5,8 +5,8 @@ import { AdminRequest } from '../middleware/adminAuth'
 import { AppError } from '../middleware/errorHandler'
 
 const ADMIN_SELECT = {
-  id: true, name: true, email: true, role: true, role_id: true,
-  is_active: true, last_login_at: true, created_at: true, updated_at: true,
+  id: true, name: true, email: true, role: true, role_id: true, celebrity_id: true,
+  is_active: true, must_change_password: true, profile_completed: true, last_login_at: true, created_at: true, updated_at: true,
 }
 
 export async function listTeamMembers(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
@@ -15,10 +15,12 @@ export async function listTeamMembers(req: AdminRequest, res: Response, next: Ne
       where: {
         id:   { not: req.adminId },
         role: { not: 'super_admin' },
+        celebrity_id: null,
       },
       select: {
         ...ADMIN_SELECT,
         assigned_role: { select: { name: true, permissions: true } },
+        celebrity: { select: { id: true, name: true, onboarding_status: true } },
       },
       orderBy: { created_at: 'desc' },
     })
@@ -35,6 +37,7 @@ export async function getTeamMember(req: AdminRequest, res: Response, next: Next
       select: {
         ...ADMIN_SELECT,
         assigned_role: { select: { name: true, permissions: true } },
+        celebrity: { select: { id: true, name: true, onboarding_status: true } },
       },
     })
     if (!member) throw new AppError('Team member not found', 404)
@@ -133,6 +136,14 @@ export async function getMe(req: AdminRequest, res: Response, next: NextFunction
       select: {
         ...ADMIN_SELECT,
         assigned_role: { select: { name: true, permissions: true } },
+        celebrity: {
+          select: {
+            id: true,
+            name: true,
+            onboarding_status: true,
+            thumbnail_url: true,
+          },
+        },
       },
     })
     if (!admin) throw new AppError('Admin not found', 404)
