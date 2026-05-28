@@ -369,6 +369,54 @@ export const emailService = {
     )
   },
 
+  async sendOtpEmail(email: string, name: string, code: string, purpose: string): Promise<void> {
+    const firstName = name.split(' ')[0]
+    const body = `
+      <h1 style="margin:0 0 6px;font-size:24px;font-weight:700;color:#1a0a30;">Your verification code</h1>
+      <p style="margin:0 0 24px;font-size:15px;color:#4a3465;line-height:1.6;">
+        Hi ${firstName}, use the code below to ${purpose}.
+      </p>
+
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:28px;">
+        <tr>
+          <td align="center">
+            <div style="display:inline-block;background:linear-gradient(135deg,#9a78fe,#422266);border-radius:16px;padding:24px 48px;">
+              <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Courier New',monospace;font-size:36px;font-weight:700;color:#ffffff;letter-spacing:8px;">${code}</span>
+            </div>
+          </td>
+        </tr>
+      </table>
+
+      ${divider()}
+
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+        <tr>
+          <td style="background:#FFF7ED;border-left:3px solid #F59E0B;border-radius:0 8px 8px 0;padding:14px 18px;">
+            <p style="margin:0;font-size:13px;color:#92400E;line-height:1.6;">
+              This code expires in <strong>10 minutes</strong>. Never share it with anyone.
+            </p>
+          </td>
+        </tr>
+      </table>
+    `
+    await send(email, 'Your Twinity verification code', layout('Verification Code — Twinity', `Your verification code is ${code}`, body))
+  },
+
+  async sendAccountSuspendedEmail(email: string, name: string, reason?: string): Promise<void> {
+    const firstName = name.split(' ')[0]
+    const body = `
+      <h1 style="margin:0 0 6px;font-size:24px;font-weight:700;color:#1a0a30;">Account suspended</h1>
+      <p style="margin:0 0 24px;font-size:15px;color:#4a3465;line-height:1.6;">
+        Hi ${firstName}, your Twinity account has been suspended.
+        ${reason ? `The reason provided was: <strong>${reason}</strong>` : ''}
+      </p>
+      <p style="margin:0;font-size:14px;color:#4a3465;line-height:1.6;">
+        If you believe this is a mistake, please contact our support team.
+      </p>
+    `
+    await send(email, 'Your Twinity account has been suspended', layout('Account Suspended — Twinity', 'Your account has been suspended.', body))
+  },
+
   async sendJobStatusUpdate(userEmail: string, userName: string, status: string, referenceId: string): Promise<void> {
     const dashLink = `${env.cors.clientUrl}/dashboard`
     const firstName = userName.split(' ')[0]

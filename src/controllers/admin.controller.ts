@@ -7,6 +7,11 @@ import { AppError } from '../middleware/errorHandler'
 import { emailService } from '../services/email.service'
 import { s3Service } from '../services/s3.service'
 import { env } from '../config/env'
+import { auditLogService } from '../services/auditLog.service'
+import { AdminRequest } from '../middleware/adminAuth'
+
+const MAX_LOGIN_ATTEMPTS = 5
+const LOCKOUT_MINUTES    = 15
 
 export async function adminLogin(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -16,7 +21,23 @@ export async function adminLogin(req: Request, res: Response, next: NextFunction
       where: { email: normalizedEmail },
       include: { celebrity: { select: { onboarding_status: true, name: true } } },
     })
+
+    if (admin?.locked_until && admin.locked_until > new Date()) {
+      const minutesLeft = Math.ceil((admin.locked_until.getTime() - Date.now()) / 60000)
+      throw new AppError(`Account locked due to too many failed attempts. Try again in ${minutesLeft} minute(s).`, 429)
+    }
+
     if (!admin || !(await bcrypt.compare(password, admin.password))) {
+      if (admin) {
+        const attempts = admin.login_attempts + 1
+        const lockedUntil = attempts >= MAX_LOGIN_ATTEMPTS
+          ? new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000)
+          : null
+        await prisma.admin.update({
+          where: { id: admin.id },
+          data:  { login_attempts: attempts, ...(lockedUntil ? { locked_until: lockedUntil } : {}) },
+        })
+      }
       throw new AppError('Invalid credentials', 401)
     }
     if (!admin.is_active) throw new AppError('Admin account is not active', 403)
@@ -24,7 +45,7 @@ export async function adminLogin(req: Request, res: Response, next: NextFunction
       throw new AppError('Celebrity portal access is not approved yet', 403)
     }
 
-    await prisma.admin.update({ where: { id: admin.id }, data: { last_login_at: new Date() } })
+    await prisma.admin.update({ where: { id: admin.id }, data: { last_login_at: new Date(), login_attempts: 0, locked_until: null } })
 
     const token = jwt.sign(
       { adminId: admin.id, role: admin.role },
@@ -217,18 +238,99 @@ export async function adminResetPassword(req: Request, res: Response, next: Next
   }
 }
 
-export async function updateUserStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function updateUserStatus(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { status } = req.body
+    const { status, reason } = req.body
+    const target = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, name: true, email: true, status: true },
+    })
+    if (!target) throw new AppError('User not found', 404)
+
+    const updateData: Record<string, unknown> = { status }
+    if (status === 'blocked') {
+      updateData.suspension_reason     = reason ?? null
+      updateData.suspended_at          = new Date()
+      updateData.suspended_by_admin_id = req.adminId
+    } else {
+      updateData.suspension_reason     = null
+      updateData.suspended_at          = null
+      updateData.suspended_by_admin_id = null
+    }
+
     const user = await prisma.user.update({
       where: { id: req.params.id },
-      data: { status },
+      data:  updateData,
+      select: { id: true, name: true, email: true, status: true, suspension_reason: true, suspended_at: true, created_at: true, updated_at: true },
+    })
+
+    const actor = await prisma.admin.findUnique({ where: { id: req.adminId }, select: { name: true, role: true } })
+    await auditLogService.log({
+      actorId:    req.adminId!,
+      actorName:  actor?.name ?? 'Admin',
+      actorRole:  actor?.role ?? 'admin',
+      action:     `user.${status}`,
+      targetType: 'user',
+      targetId:   target.id,
+      targetName: target.name,
+      reason,
+      metadata:   { previousStatus: target.status, newStatus: status },
+    })
+
+    if (status === 'blocked') {
+      emailService.sendAccountSuspendedEmail(target.email, target.name, reason).catch(() => null)
+    }
+
+    res.json({ success: true, data: user, message: `User ${status}` })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function getUserDetail(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.params.id },
       select: {
-        id: true, name: true, email: true, status: true,
+        id: true, name: true, email: true, phone: true, company: true,
+        account_type: true, auth_provider: true, has_email_password: true,
+        is_email_verified: true, status: true, last_login_at: true,
+        suspension_reason: true, suspended_at: true, suspended_by_admin_id: true,
         created_at: true, updated_at: true,
       },
     })
-    res.json({ success: true, data: user, message: `User ${status}` })
+    if (!user) throw new AppError('User not found', 404)
+    res.json({ success: true, data: user })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function listAuditLogs(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { action, targetType, actorId, from, to, page = 1, limit = 20 } = req.query
+    const result = await auditLogService.listAll(
+      {
+        action:     action as string | undefined,
+        targetType: targetType as string | undefined,
+        actorId:    actorId as string | undefined,
+        from:       from ? new Date(from as string) : undefined,
+        to:         to   ? new Date(to as string)   : undefined,
+      },
+      Number(page),
+      Number(limit),
+    )
+    res.json({ success: true, ...result })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function getUserAuditLogs(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { page = 1, limit = 20 } = req.query
+    const result = await auditLogService.listForTarget(req.params.id, Number(page), Number(limit))
+    res.json({ success: true, ...result })
   } catch (err) {
     next(err)
   }

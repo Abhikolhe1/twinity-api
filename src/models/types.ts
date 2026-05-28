@@ -51,6 +51,9 @@ export const ALL_PERMISSIONS = [
   'celebrity.profile.view',
   'celebrity.profile.update',
   'celebrity.orders.view',
+  'audit_logs.view',
+  'celebrity_managers.view',
+  'celebrity_managers.manage',
 ] as const
 
 export type Permission = typeof ALL_PERMISSIONS[number]

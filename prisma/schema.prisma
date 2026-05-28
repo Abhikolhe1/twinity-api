@@ -65,6 +65,13 @@ enum AdminRole {
   ops
 }
 
+enum OtpType {
+  email_verification
+  login_mfa
+  mfa_setup
+  password_reset_otp
+}
+
 enum CelebrityOnboardingStatus {
   pending_review
   approved
@@ -93,8 +100,13 @@ model User {
   created_at               DateTime         @default(now())
   updated_at               DateTime         @updatedAt
 
+  suspension_reason     String?
+  suspended_at          DateTime?
+  suspended_by_admin_id String?
+
   video_jobs VideoJob[]
   leads      Lead[]
+  otp_codes  OtpCode[]
 
   @@index([status])
   @@map("users")
@@ -145,9 +157,10 @@ model Celebrity {
   created_at          DateTime                   @default(now())
   updated_at          DateTime                   @updatedAt
 
-  reviewed_by Admin?    @relation("CelebrityReviewedBy", fields: [reviewed_by_admin_id], references: [id])
-  portal_admin Admin?   @relation("CelebrityPortalAccount")
-  video_jobs    VideoJob[]
+  reviewed_by    Admin?                 @relation("CelebrityReviewedBy", fields: [reviewed_by_admin_id], references: [id])
+  portal_admin   Admin?                 @relation("CelebrityPortalAccount")
+  video_jobs     VideoJob[]
+  manager_links  CelebrityManagerLink[]
 
   @@index([industry, is_active])
   @@index([onboarding_status])
@@ -254,13 +267,19 @@ model Admin {
   last_login_at          DateTime?
   password_reset_token   String?
   password_reset_expires DateTime?
+  mfa_enabled            Boolean   @default(false)
+  mfa_secret             String?
+  mfa_backup_codes       String[]  @default([])
+  login_attempts         Int       @default(0)
+  locked_until           DateTime?
   created_at             DateTime  @default(now())
   updated_at             DateTime  @updatedAt
 
-  assigned_role                   Role?       @relation("AdminRole", fields: [role_id], references: [id])
-  created_roles                   Role[]      @relation("RoleCreatedBy")
-  celebrity                       Celebrity?  @relation("CelebrityPortalAccount", fields: [celebrity_id], references: [id])
-  reviewed_celebrity_applications Celebrity[] @relation("CelebrityReviewedBy")
+  assigned_role                   Role?                  @relation("AdminRole", fields: [role_id], references: [id])
+  created_roles                   Role[]                 @relation("RoleCreatedBy")
+  celebrity                       Celebrity?             @relation("CelebrityPortalAccount", fields: [celebrity_id], references: [id])
+  reviewed_celebrity_applications Celebrity[]            @relation("CelebrityReviewedBy")
+  manager_links                   CelebrityManagerLink[] @relation("AdminManagerLinks")
 
   @@map("admins")
 }
@@ -346,4 +365,62 @@ model BlockedWord {
   created_at DateTime @default(now())
 
   @@map("blocked_words")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  actor_id    String
+  actor_name  String
+  actor_role  String
+  action      String
+  target_type String
+  target_id   String
+  target_name String?
+  reason      String?
+  metadata    Json     @default("{}")
+  created_at  DateTime @default(now())
+
+  @@index([actor_id])
+  @@index([target_id])
+  @@index([action])
+  @@index([created_at])
+  @@map("audit_logs")
+}
+
+model OtpCode {
+  id         String   @id @default(uuid())
+  email      String
+  code       String
+  type       OtpType
+  expires_at DateTime
+  used       Boolean  @default(false)
+  attempts   Int      @default(0)
+  user_id    String?
+  created_at DateTime @default(now())
+
+  user User? @relation(fields: [user_id], references: [id])
+
+  @@index([email, type])
+  @@index([expires_at])
+  @@map("otp_codes")
+}
+
+model CelebrityManagerLink {
+  id           String   @id @default(uuid())
+  celebrity_id String
+  admin_id     String
+  permissions  String[] @default([])
+  is_active    Boolean  @default(true)
+  linked_by    String?
+  notes        String?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  celebrity Celebrity @relation(fields: [celebrity_id], references: [id])
+  admin     Admin     @relation("AdminManagerLinks", fields: [admin_id], references: [id])
+
+  @@unique([celebrity_id, admin_id])
+  @@index([celebrity_id])
+  @@index([admin_id])
+  @@map("celebrity_manager_links")
 }
