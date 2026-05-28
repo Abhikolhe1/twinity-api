@@ -1,0 +1,50 @@
+/**
+ * Re-exports Prisma-generated types for use across controllers and services.
+ * This file replaces the individual Mongoose model files.
+ */
+export type {
+  User,
+  Celebrity,
+  VideoJob,
+  Lead,
+  Admin,
+  Role,
+  Template,
+  ProductType,
+  Setting,
+  Prisma,
+} from '@prisma/client'
+
+export {
+  VideoJobStatus,
+  LeadStatus,
+  LeadSource,
+  AdminRole,
+  UserStatus,
+  UserAccountType,
+  UserAuthProvider,
+  VideoJobProductType,
+} from '@prisma/client'
+
+// ALL_PERMISSIONS — canonical permission list (kept from original Role model)
+export const ALL_PERMISSIONS = [
+  'dashboard.view',
+  'users.view',
+  'users.manage',
+  'celebrities.view',
+  'celebrities.manage',
+  'videos.view',
+  'videos.manage',
+  'leads.view',
+  'leads.manage',
+  'settings.view',
+  'settings.manage',
+  'team.view',
+  'team.manage',
+  'roles.view',
+  'roles.manage',
+  'templates.view',
+  'templates.manage',
+] as const
+
+export type Permission = typeof ALL_PERMISSIONS[number]

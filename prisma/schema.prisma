@@ -1,0 +1,308 @@
+// Prisma Schema for Twinity API
+// Migrated from Mongoose/MongoDB to Prisma/PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ──────────────────────────────────────────────────────────────────────
+
+enum UserAccountType {
+  individual
+  influencer
+  agency
+}
+
+enum UserAuthProvider {
+  email
+  google
+}
+
+enum UserStatus {
+  active
+  blocked
+  pending
+}
+
+enum VideoJobProductType {
+  greeting
+  video_ad   @map("video-ad")
+  image_ad   @map("image-ad")
+}
+
+enum VideoJobStatus {
+  pending
+  in_progress @map("in-progress")
+  review
+  delivered
+  failed
+  cancelled
+}
+
+enum LeadStatus {
+  new
+  contacted
+  negotiating
+  paid
+  closed
+  lost
+}
+
+enum LeadSource {
+  book_call    @map("book-call")
+  contact_form @map("contact-form")
+  direct
+}
+
+enum AdminRole {
+  super_admin @map("super-admin")
+  admin
+  ops
+}
+
+// ── Models ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id                       String           @id @default(uuid())
+  name                     String
+  email                    String           @unique
+  password                 String
+  phone                    String?
+  company                  String?
+  avatar_url               String?
+  account_type             UserAccountType  @default(individual)
+  auth_provider            UserAuthProvider @default(email)
+  has_email_password       Boolean          @default(false)
+  is_email_verified        Boolean          @default(false)
+  email_verification_token String?
+  password_reset_token     String?
+  password_reset_expires   DateTime?
+  status                   UserStatus       @default(pending)
+  last_login_at            DateTime?
+  created_at               DateTime         @default(now())
+  updated_at               DateTime         @updatedAt
+
+  video_jobs VideoJob[]
+  leads      Lead[]
+
+  @@index([status])
+  @@map("users")
+}
+
+model Celebrity {
+  id                String   @id @default(uuid())
+  name              String
+  name_ar           String
+  slug              String   @unique
+  industry          String
+  nationality       String
+  nationality_ar    String
+  languages         String[]
+  tags              String[]
+  tags_ar           String[]
+  bio               String?
+  bio_ar            String?
+  avatar_color      String   @default("linear-gradient(135deg, #9a78fe, #422266)")
+  initials          String
+  thumbnail_url     String?
+  voice_model_id    String?
+  training_audio_url String?
+  is_active         Boolean  @default(true)
+  is_featured       Boolean  @default(false)
+  price_range       Json     @default("{\"greeting\":{\"min\":500,\"max\":2000},\"video-ad\":{\"min\":2000,\"max\":8000}}")
+  total_orders      Int      @default(0)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  video_jobs VideoJob[]
+
+  @@index([industry, is_active])
+  @@map("celebrities")
+}
+
+model VideoJob {
+  id                    String              @id @default(uuid())
+  reference_id          String              @unique
+  user_id               String
+  celebrity_id          String
+  product_type          VideoJobProductType
+  purpose               String
+  template_id           String?
+  script                String
+  tone                  String?
+  duration              String              @default("30s")
+  aspect_ratio          String              @default("16:9")
+  resolution            String              @default("1080p")
+  channels              String[]
+  status                VideoJobStatus      @default(pending)
+  status_history        Json                @default("[]")
+  estimated_price       Float
+  currency              String              @default("USD")
+  download_enabled      Boolean             @default(false)
+  preview_url           String?
+  final_video_url       String?
+  watermarked_url       String?
+  creatify_job_id       String?
+  voice_job_id          String?
+  voice_audio_url       String?
+  voice_model           String?
+  voice_speed           Float?
+  voice_change_enabled  Boolean             @default(false)
+  voice_change_source_url String?
+  prop_images           String[]
+  scene_notes           String?
+  background_image_url  String?
+  audio_duration        Float?
+  processed_script      String?
+  error_message         String?
+  delivered_at          DateTime?
+  created_at            DateTime            @default(now())
+  updated_at            DateTime            @updatedAt
+
+  user      User      @relation(fields: [user_id], references: [id])
+  celebrity Celebrity @relation(fields: [celebrity_id], references: [id])
+  leads     Lead[]
+
+  @@index([user_id, status])
+  @@index([status])
+  @@index([creatify_job_id])
+  @@map("video_jobs")
+}
+
+model Lead {
+  id              String     @id @default(uuid())
+  user_id         String?
+  video_job_id    String?
+  name            String
+  email           String
+  phone           String?
+  company         String?
+  celebrity_name  String
+  product_type    String
+  purpose         String
+  notes           String?
+  estimated_value Float      @default(0)
+  currency        String     @default("USD")
+  status          LeadStatus @default(new)
+  status_history  Json       @default("[]")
+  assigned_to     String?
+  follow_up_date  DateTime?
+  source          LeadSource @default(book_call)
+  created_at      DateTime   @default(now())
+  updated_at      DateTime   @updatedAt
+
+  user      User?     @relation(fields: [user_id], references: [id])
+  video_job VideoJob? @relation(fields: [video_job_id], references: [id])
+
+  @@index([status])
+  @@index([email])
+  @@map("leads")
+}
+
+model Admin {
+  id                    String    @id @default(uuid())
+  name                  String
+  email                 String    @unique
+  password              String
+  role                  AdminRole @default(ops)
+  role_id               String?
+  is_active             Boolean   @default(true)
+  last_login_at         DateTime?
+  password_reset_token  String?
+  password_reset_expires DateTime?
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
+
+  assigned_role  Role?  @relation("AdminRole", fields: [role_id], references: [id])
+  created_roles  Role[] @relation("RoleCreatedBy")
+
+  @@map("admins")
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String   @default("")
+  permissions String[]
+  is_system   Boolean  @default(false)
+  created_by  String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  admins  Admin[] @relation("AdminRole")
+  creator Admin?  @relation("RoleCreatedBy", fields: [created_by], references: [id])
+
+  @@map("roles")
+}
+
+model Template {
+  id              String   @id @default(uuid())
+  name            String
+  name_ar         String
+  description     String
+  description_ar  String
+  purpose         String
+  purpose_ar      String
+  sample_script   String
+  sample_script_ar String
+  product_types   String[]
+  duration        String   @default("30s")
+  is_active       Boolean  @default(true)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@index([product_types])
+  @@index([is_active])
+  @@index([purpose])
+  @@map("templates")
+}
+
+model ProductType {
+  id                  String   @id @default(uuid())
+  slug                String   @unique
+  name                String
+  name_ar             String
+  description         String
+  description_ar      String
+  detail              String
+  detail_ar           String
+  icon                String   @default("")
+  price_from          Float    @default(0)
+  duration            String   @default("")
+  duration_ar         String   @default("")
+  use_cases           String[]
+  use_cases_ar        String[]
+  video_prompt        String   @default("")
+  gemini_system_prompt String  @default("")
+  is_active           Boolean  @default(true)
+  order               Int      @default(0)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  @@index([is_active, order])
+  @@map("product_types")
+}
+
+model Setting {
+  id         String   @id @default(uuid())
+  key        String   @unique
+  value      String   @default("")
+  type       String   @default("general")
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model BlockedWord {
+  id         String   @id @default(uuid())
+  word       String   @unique
+  created_at DateTime @default(now())
+
+  @@map("blocked_words")
+}
