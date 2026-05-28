@@ -65,6 +65,12 @@ enum AdminRole {
   ops
 }
 
+enum CelebrityOnboardingStatus {
+  pending_review
+  approved
+  rejected
+}
+
 // ── Models ─────────────────────────────────────────────────────────────────────
 
 model User {
@@ -95,33 +101,45 @@ model User {
 }
 
 model Celebrity {
-  id                String   @id @default(uuid())
-  name              String
-  name_ar           String
-  slug              String   @unique
-  industry          String
-  nationality       String
-  nationality_ar    String
-  languages         String[]
-  tags              String[]
-  tags_ar           String[]
-  bio               String?
-  bio_ar            String?
-  avatar_color      String   @default("linear-gradient(135deg, #9a78fe, #422266)")
-  initials          String
-  thumbnail_url     String?
-  voice_model_id    String?
-  training_audio_url String?
-  is_active         Boolean  @default(true)
-  is_featured       Boolean  @default(false)
-  price_range       Json     @default("{\"greeting\":{\"min\":500,\"max\":2000},\"video-ad\":{\"min\":2000,\"max\":8000}}")
-  total_orders      Int      @default(0)
-  created_at        DateTime @default(now())
-  updated_at        DateTime @updatedAt
+  id                  String                     @id @default(uuid())
+  name                String
+  name_ar             String
+  slug                String                     @unique
+  industry            String
+  nationality         String
+  nationality_ar      String
+  region              String?
+  contact_email       String?
+  contact_phone       String?
+  languages           String[]
+  tags                String[]
+  tags_ar             String[]
+  bio                 String?
+  bio_ar              String?
+  avatar_color        String                     @default("linear-gradient(135deg, #9a78fe, #422266)")
+  initials            String
+  thumbnail_url       String?
+  voice_model_id      String?
+  training_audio_url  String?
+  is_active           Boolean                    @default(true)
+  is_featured         Boolean                    @default(false)
+  onboarding_status   CelebrityOnboardingStatus  @default(approved)
+  applied_at          DateTime                   @default(now())
+  reviewed_at         DateTime?
+  review_notes        String?
+  reviewed_by_admin_id String?
+  price_range         Json                       @default("{\"greeting\":{\"min\":500,\"max\":2000},\"video-ad\":{\"min\":2000,\"max\":8000}}")
+  total_orders        Int                        @default(0)
+  created_at          DateTime                   @default(now())
+  updated_at          DateTime                   @updatedAt
 
-  video_jobs VideoJob[]
+  reviewed_by Admin?    @relation("CelebrityReviewedBy", fields: [reviewed_by_admin_id], references: [id])
+  portal_admin Admin?   @relation("CelebrityPortalAccount")
+  video_jobs    VideoJob[]
 
   @@index([industry, is_active])
+  @@index([onboarding_status])
+  @@index([is_active, onboarding_status])
   @@map("celebrities")
 }
 
@@ -133,6 +151,7 @@ model VideoJob {
   product_type          VideoJobProductType
   purpose               String
   template_id           String?
+  approval_path         String?
   script                String
   tone                  String?
   duration              String              @default("30s")
@@ -141,6 +160,11 @@ model VideoJob {
   channels              String[]
   status                VideoJobStatus      @default(pending)
   status_history        Json                @default("[]")
+  submission_context    Json                @default("{}")
+  validation_result     Json                @default("{}")
+  submission_audit      Json                @default("[]")
+  business_verification_required Boolean    @default(false)
+  business_verification_passed   Boolean    @default(true)
   estimated_price       Float
   currency              String              @default("USD")
   download_enabled      Boolean             @default(false)
@@ -205,21 +229,26 @@ model Lead {
 }
 
 model Admin {
-  id                    String    @id @default(uuid())
-  name                  String
-  email                 String    @unique
-  password              String
-  role                  AdminRole @default(ops)
-  role_id               String?
-  is_active             Boolean   @default(true)
-  last_login_at         DateTime?
-  password_reset_token  String?
+  id                     String    @id @default(uuid())
+  name                   String
+  email                  String    @unique
+  password               String
+  role                   AdminRole @default(ops)
+  role_id                String?
+  celebrity_id           String?   @unique
+  is_active              Boolean   @default(true)
+  must_change_password   Boolean   @default(false)
+  profile_completed      Boolean   @default(true)
+  last_login_at          DateTime?
+  password_reset_token   String?
   password_reset_expires DateTime?
-  created_at            DateTime  @default(now())
-  updated_at            DateTime  @updatedAt
+  created_at             DateTime  @default(now())
+  updated_at             DateTime  @updatedAt
 
-  assigned_role  Role?  @relation("AdminRole", fields: [role_id], references: [id])
-  created_roles  Role[] @relation("RoleCreatedBy")
+  assigned_role                   Role?       @relation("AdminRole", fields: [role_id], references: [id])
+  created_roles                   Role[]      @relation("RoleCreatedBy")
+  celebrity                       Celebrity?  @relation("CelebrityPortalAccount", fields: [celebrity_id], references: [id])
+  reviewed_celebrity_applications Celebrity[] @relation("CelebrityReviewedBy")
 
   @@map("admins")
 }

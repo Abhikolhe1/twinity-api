@@ -20,6 +20,7 @@ export {
   LeadStatus,
   LeadSource,
   AdminRole,
+  CelebrityOnboardingStatus,
   UserStatus,
   UserAccountType,
   UserAuthProvider,
@@ -45,6 +46,11 @@ export const ALL_PERMISSIONS = [
   'roles.manage',
   'templates.view',
   'templates.manage',
+  'celebrity_applications.view',
+  'celebrity_applications.manage',
+  'celebrity.profile.view',
+  'celebrity.profile.update',
+  'celebrity.orders.view',
 ] as const
 
 export type Permission = typeof ALL_PERMISSIONS[number]

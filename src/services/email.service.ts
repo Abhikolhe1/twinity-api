@@ -290,6 +290,46 @@ export const emailService = {
     await send(email, 'Reset your Twinity Admin password', layout('Reset your Twinity Admin password', 'Admin reset link inside — expires in 1 hour.', body))
   },
 
+  async sendCelebrityPortalWelcomeEmail(email: string, name: string, temporaryPassword: string): Promise<void> {
+    const loginLink = `${env.cors.adminUrl}/login`
+    const firstName = name.split(' ')[0]
+    const body = `
+      <h1 style="margin:0 0 6px;font-size:24px;font-weight:700;color:#1a0a30;">Your Celebrity Portal is ready</h1>
+      <p style="margin:0 0 24px;font-size:15px;color:#4a3465;line-height:1.6;">
+        Hi ${firstName}, your celebrity onboarding request has been approved. You can now sign in to the Twinity Celebrity Portal using the details below.
+      </p>
+
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+             style="background:#F8F5FF;border-radius:12px;padding:4px 20px;margin-bottom:28px;">
+        <tbody>
+          ${detailRow('Login URL', `<a href="${loginLink}" style="color:#9a78fe;">${loginLink}</a>`)}
+          ${detailRow('Email', email)}
+          ${detailRow('Temporary Password', `<span style="font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;">${temporaryPassword}</span>`)}
+        </tbody>
+      </table>
+
+      ${ctaButton(loginLink, 'Open Celebrity Portal')}
+
+      ${divider()}
+
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+        <tr>
+          <td style="background:#FFF7ED;border-left:3px solid #F59E0B;border-radius:0 8px 8px 0;padding:14px 18px;">
+            <p style="margin:0;font-size:13px;color:#92400E;line-height:1.6;">
+              <strong>First sign-in:</strong> After your first login, complete your profile to unlock the full portal.
+              If you prefer, you can use <strong>Forgot password</strong> on the sign-in page to set a new password immediately.
+            </p>
+          </td>
+        </tr>
+      </table>
+    `
+    await send(
+      email,
+      'Your Twinity Celebrity Portal access',
+      layout('Your Twinity Celebrity Portal access', 'Your celebrity portal access has been approved.', body),
+    )
+  },
+
   async sendNewLeadNotification(lead: ILead): Promise<void> {
     const adminLink = `${env.cors.adminUrl}/leads`
     const body = `

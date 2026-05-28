@@ -2,8 +2,16 @@ import { Router } from 'express'
 import multer from 'multer'
 import { adminLogin, getDashboardStats, listUsers, updateUserStatus, adminListCelebrities, adminForgotPassword, adminResetPassword } from '../controllers/admin.controller'
 import { getMe } from '../controllers/team.controller'
-import { requireAdmin, requirePermission } from '../middleware/adminAuth'
+import { requireAdmin, requirePermission, requireRole } from '../middleware/adminAuth'
 import { getSettings, updateSettings, getBlockedWords, addBlockedWord, removeBlockedWord, uploadWatermarkImage, deleteWatermarkImage } from '../controllers/settings.controller'
+import {
+  approveCelebrityApplication,
+  createCelebrityPortalAccess,
+  getMyCelebrityProfile,
+  listCelebrityApplications,
+  rejectCelebrityApplication,
+  updateMyCelebrityProfile,
+} from '../controllers/celebrityOnboarding.controller'
 
 const router = Router()
 
@@ -20,11 +28,17 @@ router.post('/login', adminLogin)
 router.post('/forgot-password', adminForgotPassword)
 router.post('/reset-password/:token', adminResetPassword)
 router.get('/me', requireAdmin, getMe)
-router.get('/dashboard', requireAdmin, getDashboardStats)
-router.get('/users', requireAdmin, listUsers)
+router.get('/dashboard', requireAdmin, requirePermission('dashboard.view'), getDashboardStats)
+router.get('/users', requireAdmin, requirePermission('users.view'), listUsers)
 router.patch('/users/:id/status', requireAdmin, requirePermission('users.manage'), updateUserStatus)
-router.get('/celebrities', requireAdmin, adminListCelebrities)
-router.get('/settings', requireAdmin, getSettings)
+router.get('/celebrities', requireAdmin, requirePermission('celebrities.view'), adminListCelebrities)
+router.post('/celebrities/:id/portal-access', requireAdmin, requireRole('super-admin'), requirePermission('celebrities.manage'), createCelebrityPortalAccess)
+router.get('/celebrity-applications', requireAdmin, requirePermission('celebrity_applications.view'), listCelebrityApplications)
+router.post('/celebrity-applications/:id/approve', requireAdmin, requireRole('super-admin'), requirePermission('celebrity_applications.manage'), approveCelebrityApplication)
+router.post('/celebrity-applications/:id/reject', requireAdmin, requireRole('super-admin'), requirePermission('celebrity_applications.manage'), rejectCelebrityApplication)
+router.get('/celebrity/profile', requireAdmin, requirePermission('celebrity.profile.view'), getMyCelebrityProfile)
+router.put('/celebrity/profile', requireAdmin, requirePermission('celebrity.profile.update'), updateMyCelebrityProfile)
+router.get('/settings', requireAdmin, requirePermission('settings.view'), getSettings)
 router.put('/settings', requireAdmin, requirePermission('settings.manage'), updateSettings)
 router.post('/settings/watermark-image', requireAdmin, requirePermission('settings.manage'), watermarkUpload, uploadWatermarkImage)
 router.delete('/settings/watermark-image', requireAdmin, requirePermission('settings.manage'), deleteWatermarkImage)

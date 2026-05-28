@@ -6,6 +6,7 @@ import { emailService } from '../services/email.service'
 import { s3Service } from '../services/s3.service'
 import { aiService, ElevenLabsTTSModel, ElevenLabsSTSModel } from '../services/ai.service'
 import { settingsService } from '../services/settings.service'
+import { validateSubmission } from '../services/submission-validation.service'
 import { AuthRequest } from '../middleware/auth'
 import type { VideoJobStatus } from '../models/types'
 
@@ -34,6 +35,35 @@ async function appendStatusHistory(
   return [...history, entry]
 }
 
+function hasReviewableMedia(job: {
+  preview_url?: string | null
+  watermarked_url?: string | null
+  final_video_url?: string | null
+}): boolean {
+  return Boolean(job.preview_url || job.watermarked_url || job.final_video_url)
+}
+
+async function getSubmissionUserContext(userId: string | undefined): Promise<{ accountType?: string | null; company?: string | null }> {
+  if (!userId) return {}
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { account_type: true, company: true },
+  })
+  return {
+    accountType: user?.account_type,
+    company: user?.company,
+  }
+}
+
+export async function validateSubmissionRequest(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await validateSubmission(req.body, await getSubmissionUserContext(req.userId))
+    res.json({ success: true, data: result })
+  } catch (err) {
+    next(err)
+  }
+}
+
 export async function createJob(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { celebrityId, productType, purpose, templateId, script, tone, duration, aspectRatio, resolution, channels,
@@ -43,25 +73,31 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
 
     if (!voiceAudioUrl) throw new AppError('voiceAudioUrl is required — complete a voice preview before submitting', 400)
 
+    const submissionValidation = await validateSubmission(
+      {
+        celebrityId,
+        productType,
+        purpose,
+        templateId,
+        script,
+        channels,
+        duration,
+        aspectRatio,
+      },
+      await getSubmissionUserContext(req.userId),
+    )
+    if (!submissionValidation.valid) {
+      throw new AppError(submissionValidation.errors[0]?.message || 'Submission validation failed', 422)
+    }
+
     const celeb = await prisma.celebrity.findUnique({ where: { id: celebrityId } })
     if (!celeb || !celeb.is_active) throw new AppError('Celebrity not found or inactive', 404)
 
-    if (script) {
-      const bwRows = await prisma.blockedWord.findMany()
-      const blockedWords: string[] = bwRows.map(r => r.word)
-      const scriptLower = script.toLowerCase()
-      const found = blockedWords.filter((word: string) => {
-        const regex = new RegExp(`\\b${word.toLowerCase()}\\b`)
-        return regex.test(scriptLower)
-      })
-      if (found.length > 0) throw new AppError(`Script contains prohibited content: ${found.join(', ')}`, 422)
-    }
-
-    const priceRange = celeb.price_range as Record<string, { min: number; max: number }>
-    const range = priceRange?.[productType as string]
-    const estimatedPrice = range ? Math.floor((range.min + range.max) / 2) : 0
-
-    const statusHistory = [{ status: 'pending', timestamp: new Date().toISOString() }]
+    const statusHistory = [{
+      status: 'pending',
+      timestamp: new Date().toISOString(),
+      note: `Submission accepted on ${submissionValidation.approvalPath} route`,
+    }]
 
     const job = await prisma.videoJob.create({
       data: {
@@ -69,16 +105,23 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
         user_id:               req.userId!,
         celebrity_id:          celebrityId,
         product_type:          productType,
-        purpose,
+        purpose:               submissionValidation.normalized.purpose,
         template_id:           templateId,
-        script,
+        approval_path:         submissionValidation.approvalPath,
+        script:                submissionValidation.normalized.script,
         tone,
         duration:              duration    || '30s',
         aspect_ratio:          aspectRatio || '16:9',
         resolution:            resolution  || '1080p',
-        channels:              channels    || [],
-        estimated_price:       estimatedPrice,
+        channels:              submissionValidation.normalized.channels,
         status_history:        statusHistory,
+        submission_context:    submissionValidation.submissionContext as any,
+        validation_result:     submissionValidation.validationSummary as any,
+        submission_audit:      [submissionValidation.auditEntry] as any,
+        business_verification_required: submissionValidation.businessVerificationRequired,
+        business_verification_passed:   submissionValidation.businessVerificationPassed,
+        estimated_price:       submissionValidation.pricingSnapshot.subtotal,
+        currency:              submissionValidation.pricingSnapshot.currency,
         prop_images:           Array.isArray(propImages) && propImages.length ? propImages : [],
         scene_notes:           sceneNotes          || undefined,
         background_image_url:  backgroundImageUrl  || undefined,
@@ -311,6 +354,9 @@ export async function adminUpdateJobStatus(req: Request, res: Response, next: Ne
     if (!job) throw new AppError('Job not found', 404)
 
     const prismaStatus = status === 'in-progress' ? 'in_progress' : status
+    if (prismaStatus === 'review' && !hasReviewableMedia(job)) {
+      throw new AppError('Cannot move request to review until a preview or final media URL exists', 400)
+    }
 
     const history = await appendStatusHistory(id, { status, timestamp: new Date().toISOString(), note })
     const updateData: Record<string, unknown> = {

@@ -11,11 +11,18 @@ import { env } from '../config/env'
 export async function adminLogin(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { email, password } = req.body
-    const admin = await prisma.admin.findUnique({ where: { email } })
+    const normalizedEmail = String(email || '').trim().toLowerCase()
+    const admin = await prisma.admin.findUnique({
+      where: { email: normalizedEmail },
+      include: { celebrity: { select: { onboarding_status: true, name: true } } },
+    })
     if (!admin || !(await bcrypt.compare(password, admin.password))) {
       throw new AppError('Invalid credentials', 401)
     }
     if (!admin.is_active) throw new AppError('Admin account is not active', 403)
+    if (admin.celebrity_id && admin.celebrity?.onboarding_status !== 'approved') {
+      throw new AppError('Celebrity portal access is not approved yet', 403)
+    }
 
     await prisma.admin.update({ where: { id: admin.id }, data: { last_login_at: new Date() } })
 
@@ -28,7 +35,15 @@ export async function adminLogin(req: Request, res: Response, next: NextFunction
     res.json({
       success: true,
       token,
-      admin: { id: admin.id, name: admin.name, email: admin.email, role: admin.role },
+      admin: {
+        id: admin.id,
+        name: admin.name,
+        email: admin.email,
+        role: admin.role,
+        celebrity_id: admin.celebrity_id,
+        profile_completed: admin.profile_completed,
+        must_change_password: admin.must_change_password,
+      },
     })
   } catch (err) {
     next(err)
@@ -129,6 +144,15 @@ export async function adminListCelebrities(req: Request, res: Response, next: Ne
         orderBy: [{ is_featured: 'desc' }, { is_active: 'desc' }, { total_orders: 'desc' }],
         skip,
         take: Number(limit),
+        include: {
+          portal_admin: {
+            select: {
+              id: true,
+              email: true,
+              is_active: true,
+            },
+          },
+        },
       }),
       prisma.celebrity.count({ where }),
     ])
@@ -145,7 +169,8 @@ export async function adminListCelebrities(req: Request, res: Response, next: Ne
 export async function adminForgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { email } = req.body
-    const admin = await prisma.admin.findUnique({ where: { email } })
+    const normalizedEmail = String(email || '').trim().toLowerCase()
+    const admin = await prisma.admin.findUnique({ where: { email: normalizedEmail } })
     if (admin) {
       const resetToken = uuidv4()
       await prisma.admin.update({
@@ -155,7 +180,7 @@ export async function adminForgotPassword(req: Request, res: Response, next: Nex
           password_reset_expires: new Date(Date.now() + 60 * 60 * 1000),
         },
       })
-      emailService.sendAdminPasswordResetEmail(email, admin.name, resetToken).catch(() => null)
+      emailService.sendAdminPasswordResetEmail(normalizedEmail, admin.name, resetToken).catch(() => null)
     }
     res.json({ success: true, message: 'If this email is registered, a reset link has been sent.' })
   } catch (err) {
@@ -180,6 +205,7 @@ export async function adminResetPassword(req: Request, res: Response, next: Next
       where: { id: admin.id },
       data: {
         password:               hashedPassword,
+        must_change_password:   false,
         password_reset_token:   null,
         password_reset_expires: null,
       },

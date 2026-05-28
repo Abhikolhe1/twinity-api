@@ -10,6 +10,7 @@ export interface AdminRequest extends Request {
   adminId?: string
   adminRole?: AdminRole
   adminPermissions?: string[]
+  celebrityId?: string | null
 }
 
 export async function requireAdmin(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
@@ -26,15 +27,26 @@ export async function requireAdmin(req: AdminRequest, res: Response, next: NextF
     const decoded = jwt.verify(token, env.adminJwtSecret) as { adminId: string; role: string }
     const admin = await prisma.admin.findUnique({
       where: { id: decoded.adminId },
-      select: { is_active: true, role: true, role_id: true },
+      select: {
+        is_active: true,
+        role: true,
+        role_id: true,
+        celebrity_id: true,
+        celebrity: { select: { onboarding_status: true } },
+      },
     })
     if (!admin || !admin.is_active) {
       res.status(401).json({ success: false, message: 'Admin account is not active' })
       return
     }
+    if (admin.celebrity_id && admin.celebrity?.onboarding_status !== 'approved') {
+      res.status(401).json({ success: false, message: 'Celebrity portal access is not approved yet' })
+      return
+    }
 
     req.adminId = decoded.adminId
     req.adminRole = (decoded.role as string).replace('_', '-') as AdminRole
+    req.celebrityId = admin.celebrity_id
 
     if (admin.role === 'super_admin') {
       req.adminPermissions = [...ALL_PERMISSIONS]
