@@ -29,13 +29,16 @@ export async function adminLogin(req: Request, res: Response, next: NextFunction
 
     if (!admin || !(await bcrypt.compare(password, admin.password))) {
       if (admin) {
-        const attempts = admin.login_attempts + 1
-        const lockedUntil = attempts >= MAX_LOGIN_ATTEMPTS
+        // If the previous lockout has expired, reset the counter before incrementing
+        const lockoutExpired = admin.locked_until !== null && admin.locked_until <= new Date()
+        const baseAttempts   = lockoutExpired ? 0 : admin.login_attempts
+        const attempts       = baseAttempts + 1
+        const lockedUntil    = attempts >= MAX_LOGIN_ATTEMPTS
           ? new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000)
           : null
         await prisma.admin.update({
           where: { id: admin.id },
-          data:  { login_attempts: attempts, ...(lockedUntil ? { locked_until: lockedUntil } : {}) },
+          data:  { login_attempts: attempts, locked_until: lockedUntil },
         })
       }
       throw new AppError('Invalid credentials', 401)
