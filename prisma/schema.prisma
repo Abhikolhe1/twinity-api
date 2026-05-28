@@ -151,6 +151,7 @@ model VideoJob {
   product_type          VideoJobProductType
   purpose               String
   template_id           String?
+  approval_path         String?
   script                String
   tone                  String?
   duration              String              @default("30s")
@@ -159,6 +160,11 @@ model VideoJob {
   channels              String[]
   status                VideoJobStatus      @default(pending)
   status_history        Json                @default("[]")
+  submission_context    Json                @default("{}")
+  validation_result     Json                @default("{}")
+  submission_audit      Json                @default("[]")
+  business_verification_required Boolean    @default(false)
+  business_verification_passed   Boolean    @default(true)
   estimated_price       Float
   currency              String              @default("USD")
   download_enabled      Boolean             @default(false)
