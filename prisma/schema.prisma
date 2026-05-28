@@ -104,6 +104,7 @@ model Celebrity {
   id                  String                     @id @default(uuid())
   name                String
   name_ar             String
+  legal_name          String?
   slug                String                     @unique
   industry            String
   nationality         String
@@ -116,6 +117,17 @@ model Celebrity {
   tags_ar             String[]
   bio                 String?
   bio_ar              String?
+  social_links        Json                       @default("{}")
+  allowed_content_categories String[]            @default([])
+  prohibited_industries     String[]            @default([])
+  competitor_brands         String[]            @default([])
+  geographic_availability   Json                @default("{\"mode\":\"global\",\"allowedRegions\":[],\"restrictedRegions\":[]}")
+  tone_style_preferences    Json                @default("{\"communicationStyle\":\"\",\"visualStyle\":\"\",\"endorsedTopics\":[],\"personalRestrictions\":[]}")
+  approval_preferences      Json                @default("{\"greetingAutoApprove\":false,\"manualReviewRequired\":true,\"slaHours\":48,\"fastTrackEligible\":false,\"templatePolicyReviewed\":false}")
+  preapproved_template_ids  String[]            @default([])
+  manager_settings          Json                @default("{\"selfManaged\":true,\"agencyName\":\"\",\"managerName\":\"\",\"managerEmail\":\"\",\"managerPhone\":\"\",\"permissions\":[]}")
+  approved_media_urls       String[]            @default([])
+  contract_acceptance       Json                @default("{\"accepted\":false,\"acceptedAt\":null,\"signedName\":\"\"}")
   avatar_color        String                     @default("linear-gradient(135deg, #9a78fe, #422266)")
   initials            String
   thumbnail_url       String?

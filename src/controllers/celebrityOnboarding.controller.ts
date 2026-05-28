@@ -47,6 +47,117 @@ function normalizeList(value: unknown): string[] {
   return []
 }
 
+type SocialLinks = {
+  instagram?: string
+  tiktok?: string
+  snapchat?: string
+  x?: string
+  youtube?: string
+}
+
+type GeographicAvailability = {
+  mode: 'global' | 'gcc' | 'mena' | 'custom'
+  allowedRegions: string[]
+  restrictedRegions: string[]
+}
+
+type ToneStylePreferences = {
+  communicationStyle: string
+  visualStyle: string
+  endorsedTopics: string[]
+  personalRestrictions: string[]
+}
+
+type ApprovalPreferences = {
+  greetingAutoApprove: boolean
+  manualReviewRequired: boolean
+  slaHours: number
+  fastTrackEligible: boolean
+  templatePolicyReviewed: boolean
+}
+
+type ManagerSettings = {
+  selfManaged: boolean
+  agencyName: string
+  managerName: string
+  managerEmail: string
+  managerPhone: string
+  permissions: string[]
+}
+
+type ContractAcceptance = {
+  accepted: boolean
+  acceptedAt: string | null
+  signedName: string
+}
+
+function normalizeSocialLinks(value: unknown): SocialLinks {
+  const input = (value && typeof value === 'object') ? value as Record<string, unknown> : {}
+  return {
+    instagram: String(input.instagram || '').trim() || undefined,
+    tiktok: String(input.tiktok || '').trim() || undefined,
+    snapchat: String(input.snapchat || '').trim() || undefined,
+    x: String(input.x || '').trim() || undefined,
+    youtube: String(input.youtube || '').trim() || undefined,
+  }
+}
+
+function normalizeGeographicAvailability(value: unknown): GeographicAvailability {
+  const input = (value && typeof value === 'object') ? value as Record<string, unknown> : {}
+  const mode = String(input.mode || 'global').trim()
+  return {
+    mode: (['global', 'gcc', 'mena', 'custom'].includes(mode) ? mode : 'global') as GeographicAvailability['mode'],
+    allowedRegions: normalizeList(input.allowedRegions),
+    restrictedRegions: normalizeList(input.restrictedRegions),
+  }
+}
+
+function normalizeToneStylePreferences(value: unknown): ToneStylePreferences {
+  const input = (value && typeof value === 'object') ? value as Record<string, unknown> : {}
+  return {
+    communicationStyle: String(input.communicationStyle || '').trim(),
+    visualStyle: String(input.visualStyle || '').trim(),
+    endorsedTopics: normalizeList(input.endorsedTopics),
+    personalRestrictions: normalizeList(input.personalRestrictions),
+  }
+}
+
+function normalizeApprovalPreferences(value: unknown): ApprovalPreferences {
+  const input = (value && typeof value === 'object') ? value as Record<string, unknown> : {}
+  const rawSla = Number(input.slaHours)
+  return {
+    greetingAutoApprove: Boolean(input.greetingAutoApprove),
+    manualReviewRequired: input.manualReviewRequired === undefined ? true : Boolean(input.manualReviewRequired),
+    slaHours: Number.isFinite(rawSla) && rawSla > 0 ? rawSla : 48,
+    fastTrackEligible: Boolean(input.fastTrackEligible),
+    templatePolicyReviewed: Boolean(input.templatePolicyReviewed),
+  }
+}
+
+function normalizeManagerSettings(value: unknown): ManagerSettings {
+  const input = (value && typeof value === 'object') ? value as Record<string, unknown> : {}
+  return {
+    selfManaged: input.selfManaged === undefined ? true : Boolean(input.selfManaged),
+    agencyName: String(input.agencyName || '').trim(),
+    managerName: String(input.managerName || '').trim(),
+    managerEmail: String(input.managerEmail || '').trim().toLowerCase(),
+    managerPhone: String(input.managerPhone || '').trim(),
+    permissions: normalizeList(input.permissions),
+  }
+}
+
+function normalizeContractAcceptance(value: unknown): ContractAcceptance {
+  const input = (value && typeof value === 'object') ? value as Record<string, unknown> : {}
+  const accepted = Boolean(input.accepted)
+  const signedName = String(input.signedName || '').trim()
+  const acceptedAtRaw = String(input.acceptedAt || '').trim()
+  return {
+    accepted,
+    signedName,
+    acceptedAt: accepted ? (acceptedAtRaw || new Date().toISOString()) : null,
+  }
+}
+
 async function ensureCelebrityPortalRole(createdBy?: string): Promise<string> {
   const existing = await prisma.role.findFirst({
     where: { name: { equals: CELEBRITY_PORTAL_ROLE, mode: 'insensitive' } },
@@ -171,20 +282,61 @@ async function createOrRefreshCelebrityPortalAccess(
 function isCelebrityProfileComplete(celebrity: {
   name: string
   name_ar: string
+  legal_name: string | null
   nationality: string
   nationality_ar: string
   industry: string
   bio: string | null
   thumbnail_url: string | null
+  languages: string[]
+  social_links: unknown
+  allowed_content_categories: string[]
+  prohibited_industries: string[]
+  competitor_brands: string[]
+  geographic_availability: unknown
+  tone_style_preferences: unknown
+  approval_preferences: unknown
+  preapproved_template_ids: string[]
+  manager_settings: unknown
+  approved_media_urls: string[]
+  contract_acceptance: unknown
 }): boolean {
+  const socialLinks = normalizeSocialLinks(celebrity.social_links)
+  const geographicAvailability = normalizeGeographicAvailability(celebrity.geographic_availability)
+  const toneStylePreferences = normalizeToneStylePreferences(celebrity.tone_style_preferences)
+  const approvalPreferences = normalizeApprovalPreferences(celebrity.approval_preferences)
+  const managerSettings = normalizeManagerSettings(celebrity.manager_settings)
+  const contractAcceptance = normalizeContractAcceptance(celebrity.contract_acceptance)
+  const hasSocialLink = Object.values(socialLinks).some(Boolean)
+  const managerSectionValid = managerSettings.selfManaged
+    ? true
+    : Boolean(managerSettings.managerName && managerSettings.managerEmail && managerSettings.permissions.length)
+
   return Boolean(
     celebrity.name.trim() &&
     celebrity.name_ar.trim() &&
+    celebrity.legal_name?.trim() &&
     celebrity.nationality.trim() &&
     celebrity.nationality_ar.trim() &&
     celebrity.industry.trim() &&
     celebrity.bio?.trim() &&
-    celebrity.thumbnail_url?.trim()
+    celebrity.thumbnail_url?.trim() &&
+    celebrity.languages.length &&
+    hasSocialLink &&
+    celebrity.allowed_content_categories.length &&
+    celebrity.prohibited_industries.length &&
+    celebrity.competitor_brands.length &&
+    geographicAvailability.mode &&
+    (geographicAvailability.mode !== 'custom' || geographicAvailability.allowedRegions.length) &&
+    toneStylePreferences.communicationStyle &&
+    toneStylePreferences.visualStyle &&
+    toneStylePreferences.endorsedTopics.length &&
+    approvalPreferences.slaHours > 0 &&
+    approvalPreferences.templatePolicyReviewed &&
+    managerSectionValid &&
+    celebrity.approved_media_urls.length &&
+    contractAcceptance.accepted &&
+    contractAcceptance.signedName
   )
 }
 
@@ -374,7 +526,14 @@ export async function createCelebrityPortalAccess(req: AdminRequest, res: Respon
 export async function getMyCelebrityProfile(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const celebrityId = await requireCelebrityScope(req)
-    const celebrity = await prisma.celebrity.findUnique({ where: { id: celebrityId } })
+    const [celebrity, templates] = await Promise.all([
+      prisma.celebrity.findUnique({ where: { id: celebrityId } }),
+      prisma.template.findMany({
+        where: { is_active: true, product_types: { has: 'video-ad' } },
+        orderBy: [{ purpose: 'asc' }, { name: 'asc' }],
+        select: { id: true, name: true, purpose: true, product_types: true, duration: true },
+      }),
+    ])
     if (!celebrity) throw new AppError('Celebrity profile not found', 404)
 
     res.json({
@@ -383,6 +542,7 @@ export async function getMyCelebrityProfile(req: AdminRequest, res: Response, ne
         ...celebrity,
         thumbnail_url: await s3Service.presignIfS3(celebrity.thumbnail_url ?? undefined),
       },
+      templates,
     })
   } catch (err) {
     next(err)
@@ -396,6 +556,7 @@ export async function updateMyCelebrityProfile(req: AdminRequest, res: Response,
     const requiredLabels: Array<[keyof typeof body, string]> = [
       ['name', 'Full name'],
       ['name_ar', 'Arabic name'],
+      ['legal_name', 'Legal name'],
       ['industry', 'Industry'],
       ['nationality', 'Nationality'],
       ['nationality_ar', 'Arabic nationality'],
@@ -409,6 +570,58 @@ export async function updateMyCelebrityProfile(req: AdminRequest, res: Response,
     }
     if ('languages' in body && normalizeList(body.languages).length === 0) {
       throw new AppError('At least one language is required', 400)
+    }
+    if ('social_links' in body) {
+      const socialLinks = normalizeSocialLinks(body.social_links)
+      if (!Object.values(socialLinks).some(Boolean)) {
+        throw new AppError('At least one social media link is required', 400)
+      }
+    }
+    if ('allowed_content_categories' in body && normalizeList(body.allowed_content_categories).length === 0) {
+      throw new AppError('At least one allowed content category is required', 400)
+    }
+    if ('prohibited_industries' in body && normalizeList(body.prohibited_industries).length === 0) {
+      throw new AppError('At least one prohibited industry is required', 400)
+    }
+    if ('competitor_brands' in body && normalizeList(body.competitor_brands).length === 0) {
+      throw new AppError('At least one competitor brand restriction is required', 400)
+    }
+    if ('geographic_availability' in body) {
+      const geographicAvailability = normalizeGeographicAvailability(body.geographic_availability)
+      if (geographicAvailability.mode === 'custom' && geographicAvailability.allowedRegions.length === 0) {
+        throw new AppError('Custom geographic availability requires at least one allowed region', 400)
+      }
+    }
+    if ('tone_style_preferences' in body) {
+      const toneStylePreferences = normalizeToneStylePreferences(body.tone_style_preferences)
+      if (!toneStylePreferences.communicationStyle) throw new AppError('Communication style is required', 400)
+      if (!toneStylePreferences.visualStyle) throw new AppError('Visual style is required', 400)
+      if (toneStylePreferences.endorsedTopics.length === 0) throw new AppError('At least one endorsed topic is required', 400)
+    }
+    if ('approval_preferences' in body) {
+      const approvalPreferences = normalizeApprovalPreferences(body.approval_preferences)
+      if (!Number.isFinite(approvalPreferences.slaHours) || approvalPreferences.slaHours <= 0) {
+        throw new AppError('SLA hours must be greater than zero', 400)
+      }
+      if (!approvalPreferences.templatePolicyReviewed) {
+        throw new AppError('Template approval policy must be reviewed before saving', 400)
+      }
+    }
+    if ('manager_settings' in body) {
+      const managerSettings = normalizeManagerSettings(body.manager_settings)
+      if (!managerSettings.selfManaged) {
+        if (!managerSettings.managerName) throw new AppError('Manager or agent name is required', 400)
+        if (!managerSettings.managerEmail) throw new AppError('Manager or agent email is required', 400)
+        if (managerSettings.permissions.length === 0) throw new AppError('Select at least one manager permission', 400)
+      }
+    }
+    if ('approved_media_urls' in body && normalizeList(body.approved_media_urls).length === 0) {
+      throw new AppError('At least one approved media URL is required', 400)
+    }
+    if ('contract_acceptance' in body) {
+      const contractAcceptance = normalizeContractAcceptance(body.contract_acceptance)
+      if (!contractAcceptance.accepted) throw new AppError('You must accept the platform terms to continue', 400)
+      if (!contractAcceptance.signedName) throw new AppError('Signed name is required for contract acceptance', 400)
     }
     if ('price_range' in body) {
       const priceRange = body.price_range as Record<string, { min?: unknown; max?: unknown }> | null
@@ -425,7 +638,7 @@ export async function updateMyCelebrityProfile(req: AdminRequest, res: Response,
     }
     const updateData: Record<string, unknown> = {}
 
-    const requiredStringFields = ['name', 'name_ar', 'industry', 'nationality', 'nationality_ar'] as const
+    const requiredStringFields = ['name', 'name_ar', 'legal_name', 'industry', 'nationality', 'nationality_ar'] as const
     for (const field of requiredStringFields) {
       if (field in body && typeof body[field] === 'string') {
         updateData[field] = body[field].trim()
@@ -443,6 +656,17 @@ export async function updateMyCelebrityProfile(req: AdminRequest, res: Response,
     if ('languages' in body) updateData.languages = normalizeList(body.languages)
     if ('tags' in body) updateData.tags = normalizeList(body.tags)
     if ('tags_ar' in body) updateData.tags_ar = normalizeList(body.tags_ar)
+    if ('social_links' in body) updateData.social_links = normalizeSocialLinks(body.social_links)
+    if ('allowed_content_categories' in body) updateData.allowed_content_categories = normalizeList(body.allowed_content_categories)
+    if ('prohibited_industries' in body) updateData.prohibited_industries = normalizeList(body.prohibited_industries)
+    if ('competitor_brands' in body) updateData.competitor_brands = normalizeList(body.competitor_brands)
+    if ('geographic_availability' in body) updateData.geographic_availability = normalizeGeographicAvailability(body.geographic_availability)
+    if ('tone_style_preferences' in body) updateData.tone_style_preferences = normalizeToneStylePreferences(body.tone_style_preferences)
+    if ('approval_preferences' in body) updateData.approval_preferences = normalizeApprovalPreferences(body.approval_preferences)
+    if ('preapproved_template_ids' in body) updateData.preapproved_template_ids = normalizeList(body.preapproved_template_ids)
+    if ('manager_settings' in body) updateData.manager_settings = normalizeManagerSettings(body.manager_settings)
+    if ('approved_media_urls' in body) updateData.approved_media_urls = normalizeList(body.approved_media_urls)
+    if ('contract_acceptance' in body) updateData.contract_acceptance = normalizeContractAcceptance(body.contract_acceptance)
     if ('price_range' in body) updateData.price_range = body.price_range
 
     const updated = await prisma.celebrity.update({
