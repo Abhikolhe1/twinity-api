@@ -1,7 +1,8 @@
 import { Router } from 'express'
-import { createJob, previewVoice, getMyJobs, getMyStats, getJob, cancelJob, submitBookCall, improveScript, suggestScenePrompts, generateImage, uploadAsset, getJobDownloadUrl, adminListJobs, adminUpdateJobStatus, adminEnableDownload, adminApproveJob, adminRejectJob, validateSubmissionRequest } from '../controllers/videoJob.controller'
+import { createJob, previewVoice, getMyJobs, getMyStats, getJob, cancelJob, submitBookCall, improveScript, suggestScenePrompts, generateImage, uploadAsset, getJobDownloadUrl, adminListJobs, adminUpdateJobStatus, adminEnableDownload, adminApproveJob, adminRejectJob, validateSubmissionRequest, celebrityApproveJob, celebrityRejectJob, managerApproveJob, managerRejectJob } from '../controllers/videoJob.controller'
 import { requireAuth } from '../middleware/auth'
 import { requireAdmin, requirePermission } from '../middleware/adminAuth'
+import { requireManager } from '../middleware/managerAuth'
 import { listMyCelebrityJobs } from '../controllers/celebrityOnboarding.controller'
 
 const router = Router()
@@ -21,6 +22,10 @@ router.post('/my/:referenceId/book-call', requireAuth, submitBookCall)
 router.post('/my/:referenceId/cancel', requireAuth, cancelJob)
 router.get('/my/:referenceId/download-url', requireAuth, getJobDownloadUrl)
 router.get('/celebrity/my', requireAdmin, requirePermission('celebrity.orders.view'), listMyCelebrityJobs)
+router.post('/celebrity/my/:id/approve', requireAdmin, requirePermission('celebrity.orders.view'), celebrityApproveJob)
+router.post('/celebrity/my/:id/reject', requireAdmin, requirePermission('celebrity.orders.view'), celebrityRejectJob)
+router.post('/manager/:id/approve', requireManager, managerApproveJob)
+router.post('/manager/:id/reject', requireManager, managerRejectJob)
 
 // Admin routes
 router.get('/admin', requireAdmin, requirePermission('videos.view'), adminListJobs)

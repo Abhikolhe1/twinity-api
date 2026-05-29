@@ -8,6 +8,7 @@ import { generateGeminiImage } from '../services/gemini-image.service'
 import { settingsService } from '../services/settings.service'
 import { validateSubmission } from '../services/submission-validation.service'
 import { logger } from '../config/logger'
+import { emailService } from '../services/email.service'
 
 function generateRef(): string {
   const year = new Date().getFullYear()
@@ -161,6 +162,11 @@ export async function generateImageAd(req: AuthRequest, res: Response, next: Nex
 
     const celeb = await prisma.celebrity.findUnique({ where: { id: payload.celebrityId! } })
     if (!celeb || !celeb.is_active) throw new AppError('Celebrity not found or inactive', 404)
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId! },
+      select: { email: true, name: true },
+    })
+    if (!user) throw new AppError('User not found', 404)
 
     const job = await prisma.videoJob.create({
       data: {
@@ -200,6 +206,17 @@ export async function generateImageAd(req: AuthRequest, res: Response, next: Nex
     })
 
     await kickOffImageAdGeneration(job)
+    emailService.sendSubmissionConfirmationEmail({
+      userEmail: user.email,
+      userName: user.name,
+      referenceId: job.reference_id,
+      productType: String(job.product_type),
+      purpose: job.purpose,
+      approvalPath: job.approval_path,
+      slaHours: submissionValidation.slaHours,
+      estimatedPrice: submissionValidation.pricingSnapshot.subtotal,
+      currency: submissionValidation.pricingSnapshot.currency,
+    }).catch(() => null)
 
     res.status(201).json({
       success: true,
@@ -247,6 +264,11 @@ export async function retryImageAd(req: AuthRequest, res: Response, next: NextFu
 
     const celeb = await prisma.celebrity.findUnique({ where: { id: payload.celebrityId! } })
     if (!celeb || !celeb.is_active) throw new AppError('Celebrity not found or inactive', 404)
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId! },
+      select: { email: true, name: true },
+    })
+    if (!user) throw new AppError('User not found', 404)
 
     const previousHistory = Array.isArray(existing.status_history) ? existing.status_history : []
     const restartedHistory = [
@@ -293,6 +315,18 @@ export async function retryImageAd(req: AuthRequest, res: Response, next: NextFu
     })
 
     await kickOffImageAdGeneration(updatedJob)
+    emailService.sendSubmissionConfirmationEmail({
+      userEmail: user.email,
+      userName: user.name,
+      referenceId: updatedJob.reference_id,
+      productType: String(updatedJob.product_type),
+      purpose: updatedJob.purpose,
+      approvalPath: updatedJob.approval_path,
+      slaHours: submissionValidation.slaHours,
+      estimatedPrice: submissionValidation.pricingSnapshot.subtotal,
+      currency: submissionValidation.pricingSnapshot.currency,
+      isResubmission: true,
+    }).catch(() => null)
 
     res.json({
       success: true,

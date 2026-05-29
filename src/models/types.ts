@@ -8,6 +8,7 @@ export type {
   VideoJob,
   Lead,
   Admin,
+  Manager,
   Role,
   Template,
   ProductType,
@@ -54,6 +55,7 @@ export const ALL_PERMISSIONS = [
   'audit_logs.view',
   'celebrity_managers.view',
   'celebrity_managers.manage',
+  'manager.dashboard.view',
 ] as const
 
 export type Permission = typeof ALL_PERMISSIONS[number]

@@ -284,6 +284,26 @@ model Admin {
   @@map("admins")
 }
 
+model Manager {
+  id                     String   @id @default(uuid())
+  name                   String
+  email                  String   @unique
+  password               String
+  phone                  String?
+  agency_name            String?
+  is_active              Boolean  @default(true)
+  must_change_password   Boolean  @default(true)
+  last_login_at          DateTime?
+  password_reset_token   String?
+  password_reset_expires DateTime?
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
+
+  celebrity_links CelebrityManagerLink[] @relation("ManagerLinks")
+
+  @@map("managers")
+}
+
 model Role {
   id          String   @id @default(uuid())
   name        String   @unique
@@ -408,7 +428,8 @@ model OtpCode {
 model CelebrityManagerLink {
   id           String   @id @default(uuid())
   celebrity_id String
-  admin_id     String
+  manager_id   String?
+  admin_id     String?
   permissions  String[] @default([])
   is_active    Boolean  @default(true)
   linked_by    String?
@@ -417,10 +438,12 @@ model CelebrityManagerLink {
   updated_at   DateTime @updatedAt
 
   celebrity Celebrity @relation(fields: [celebrity_id], references: [id])
-  admin     Admin     @relation("AdminManagerLinks", fields: [admin_id], references: [id])
+  manager   Manager?  @relation("ManagerLinks", fields: [manager_id], references: [id])
+  admin     Admin?    @relation("AdminManagerLinks", fields: [admin_id], references: [id])
 
-  @@unique([celebrity_id, admin_id])
+  @@unique([celebrity_id, manager_id])
   @@index([celebrity_id])
+  @@index([manager_id])
   @@index([admin_id])
   @@map("celebrity_manager_links")
 }
