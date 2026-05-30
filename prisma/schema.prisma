@@ -44,6 +44,14 @@ enum VideoJobStatus {
   cancelled
 }
 
+enum RefundStatus {
+  requested
+  approved
+  rejected
+  processed
+  partial
+}
+
 enum LeadStatus {
   new
   contacted
@@ -120,6 +128,7 @@ model User {
   video_jobs VideoJob[]
   leads      Lead[]
   otp_codes  OtpCode[]
+  refund_requests RefundRequest[]
 
   @@index([status])
   @@map("users")
@@ -230,9 +239,10 @@ model VideoJob {
   created_at            DateTime            @default(now())
   updated_at            DateTime            @updatedAt
 
-  user              User              @relation(fields: [user_id], references: [id])
-  celebrity         Celebrity         @relation(fields: [celebrity_id], references: [id])
-  leads             Lead[]
+  user      User      @relation(fields: [user_id], references: [id])
+  celebrity Celebrity @relation(fields: [celebrity_id], references: [id])
+  leads     Lead[]
+  refund_requests  RefundRequest[]
   preview_revisions PreviewRevision[]
 
   @@index([user_id, status])
@@ -298,6 +308,7 @@ model Admin {
   celebrity                       Celebrity?             @relation("CelebrityPortalAccount", fields: [celebrity_id], references: [id])
   reviewed_celebrity_applications Celebrity[]            @relation("CelebrityReviewedBy")
   manager_links                   CelebrityManagerLink[] @relation("AdminManagerLinks")
+  refund_decisions                RefundRequest[]        @relation("RefundDecisionAdmin")
 
   @@map("admins")
 }
@@ -423,6 +434,37 @@ model AuditLog {
   @@index([action])
   @@index([created_at])
   @@map("audit_logs")
+}
+
+model RefundRequest {
+  id                    String       @id @default(uuid())
+  video_job_id          String
+  user_id               String
+  status                RefundStatus @default(requested)
+  reason                String
+  requested_amount      Float?
+  approved_amount       Float?
+  currency              String       @default("USD")
+  admin_note            String?
+  decision_by_admin_id  String?
+  requested_at          DateTime     @default(now())
+  decision_at           DateTime?
+  processed_at          DateTime?
+  payment_gateway       String?
+  payment_reference     String?
+  gateway_payload       Json         @default("{}")
+  created_at            DateTime     @default(now())
+  updated_at            DateTime     @updatedAt
+
+  video_job       VideoJob @relation(fields: [video_job_id], references: [id])
+  user            User     @relation(fields: [user_id], references: [id])
+  decision_admin  Admin?   @relation("RefundDecisionAdmin", fields: [decision_by_admin_id], references: [id])
+
+  @@index([video_job_id])
+  @@index([user_id])
+  @@index([status])
+  @@index([requested_at])
+  @@map("refund_requests")
 }
 
 model OtpCode {

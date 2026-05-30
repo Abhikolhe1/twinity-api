@@ -326,7 +326,7 @@ export const emailService = {
   },
 
   async sendCelebrityPortalWelcomeEmail(email: string, name: string, temporaryPassword: string): Promise<void> {
-    const loginLink = `${env.cors.adminUrl}/celebrity-login`
+    const loginLink = `${env.cors.adminUrl}/login`
     const firstName = name.split(' ')[0]
     const body = `
       <h1 style="margin:0 0 6px;font-size:24px;font-weight:700;color:#1a0a30;">Your Celebrity Portal is ready</h1>
@@ -366,7 +366,7 @@ export const emailService = {
   },
 
   async sendManagerPortalWelcomeEmail(email: string, name: string, temporaryPassword: string): Promise<void> {
-    const loginLink = `${env.cors.adminUrl}/manager-login`
+    const loginLink = `${env.cors.adminUrl}/login`
     const firstName = name.split(' ')[0]
     const body = `
       <h1 style="margin:0 0 6px;font-size:24px;font-weight:700;color:#1a0a30;">Your Manager Portal is ready</h1>

@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import multer from 'multer'
-import { adminLogin, getDashboardStats, listUsers, updateUserStatus, getUserDetail, listAuditLogs, getUserAuditLogs, adminListCelebrities, adminForgotPassword, adminResetPassword } from '../controllers/admin.controller'
+import { portalLogin, portalForgotPassword, portalResetPassword, getDashboardStats, listUsers, updateUserStatus, getUserDetail, listAuditLogs, getUserAuditLogs, adminListCelebrities } from '../controllers/admin.controller'
 import { getMe } from '../controllers/team.controller'
 import { requireAdmin, requirePermission, requireRole } from '../middleware/adminAuth'
 import { getSettings, updateSettings, getBlockedWords, addBlockedWord, removeBlockedWord, uploadWatermarkImage, deleteWatermarkImage } from '../controllers/settings.controller'
@@ -24,9 +24,9 @@ const watermarkUpload = multer({
   },
 }).single('image')
 
-router.post('/login', adminLogin)
-router.post('/forgot-password', adminForgotPassword)
-router.post('/reset-password/:token', adminResetPassword)
+router.post('/login', portalLogin)
+router.post('/forgot-password', portalForgotPassword)
+router.post('/reset-password/:token', portalResetPassword)
 router.get('/me', requireAdmin, getMe)
 router.get('/dashboard', requireAdmin, requirePermission('dashboard.view'), getDashboardStats)
 router.get('/users', requireAdmin, requirePermission('users.view'), listUsers)

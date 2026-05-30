@@ -61,7 +61,20 @@ app.use('/api/webhooks', webhookRoutes)
 app.use('/api/', rateLimit({
   windowMs: env.rateLimit.windowMs,
   max: env.rateLimit.max,
+  skip: (req) => req.path.startsWith('/admin') || req.path.startsWith('/manager'),
   message: { success: false, message: 'Too many requests, please try again later.' },
+}))
+
+app.use('/api/admin', rateLimit({
+  windowMs: env.rateLimit.adminWindowMs,
+  max: env.rateLimit.adminMax,
+  message: { success: false, message: 'Too many admin requests, please try again shortly.' },
+}))
+
+app.use('/api/manager', rateLimit({
+  windowMs: env.rateLimit.adminWindowMs,
+  max: env.rateLimit.adminMax,
+  message: { success: false, message: 'Too many manager requests, please try again shortly.' },
 }))
 
 // ── Logging ───────────────────────────────────────────────

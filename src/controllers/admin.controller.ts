@@ -13,23 +13,52 @@ import { AdminRequest } from '../middleware/adminAuth'
 const MAX_LOGIN_ATTEMPTS = 5
 const LOCKOUT_MINUTES    = 15
 
-export async function adminLogin(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function portalLogin(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { email, password } = req.body
     const normalizedEmail = String(email || '').trim().toLowerCase()
+
+    // 1. Try Admin table (includes Celebrities)
     const admin = await prisma.admin.findUnique({
       where: { email: normalizedEmail },
       include: { celebrity: { select: { onboarding_status: true, name: true } } },
     })
 
-    if (admin?.locked_until && admin.locked_until > new Date()) {
-      const minutesLeft = Math.ceil((admin.locked_until.getTime() - Date.now()) / 60000)
-      throw new AppError(`Account locked due to too many failed attempts. Try again in ${minutesLeft} minute(s).`, 429)
-    }
+    if (admin) {
+      if (admin.locked_until && admin.locked_until > new Date()) {
+        const minutesLeft = Math.ceil((admin.locked_until.getTime() - Date.now()) / 60000)
+        throw new AppError(`Account locked due to too many failed attempts. Try again in ${minutesLeft} minute(s).`, 429)
+      }
 
-    if (!admin || !(await bcrypt.compare(password, admin.password))) {
-      if (admin) {
-        // If the previous lockout has expired, reset the counter before incrementing
+      if (await bcrypt.compare(password, admin.password)) {
+        if (!admin.is_active) throw new AppError('Account is not active', 403)
+        if (admin.celebrity_id && admin.celebrity?.onboarding_status !== 'approved') {
+          throw new AppError('Celebrity portal access is not approved yet', 403)
+        }
+
+        await prisma.admin.update({ where: { id: admin.id }, data: { last_login_at: new Date(), login_attempts: 0, locked_until: null } })
+
+        const token = jwt.sign(
+          { adminId: admin.id, role: admin.role },
+          env.adminJwtSecret,
+          { expiresIn: '12h' }
+        )
+
+        res.json({
+          success: true,
+          token,
+          role: admin.celebrity_id ? 'celebrity' : 'admin',
+          user: {
+            id: admin.id,
+            name: admin.name,
+            email: admin.email,
+            celebrity_id: admin.celebrity_id,
+          },
+          redirect: admin.celebrity_id ? '/celebrity/profile' : '/',
+        })
+        return
+      } else {
+        // Record failed attempt
         const lockoutExpired = admin.locked_until !== null && admin.locked_until <= new Date()
         const baseAttempts   = lockoutExpired ? 0 : admin.login_attempts
         const attempts       = baseAttempts + 1
@@ -40,35 +69,46 @@ export async function adminLogin(req: Request, res: Response, next: NextFunction
           where: { id: admin.id },
           data:  { login_attempts: attempts, locked_until: lockedUntil },
         })
+        throw new AppError('Invalid credentials', 401)
       }
-      throw new AppError('Invalid credentials', 401)
-    }
-    if (!admin.is_active) throw new AppError('Admin account is not active', 403)
-    if (admin.celebrity_id && admin.celebrity?.onboarding_status !== 'approved') {
-      throw new AppError('Celebrity portal access is not approved yet', 403)
     }
 
-    await prisma.admin.update({ where: { id: admin.id }, data: { last_login_at: new Date(), login_attempts: 0, locked_until: null } })
-
-    const token = jwt.sign(
-      { adminId: admin.id, role: admin.role },
-      env.adminJwtSecret,
-      { expiresIn: '12h' }
-    )
-
-    res.json({
-      success: true,
-      token,
-      admin: {
-        id: admin.id,
-        name: admin.name,
-        email: admin.email,
-        role: admin.role,
-        celebrity_id: admin.celebrity_id,
-        profile_completed: admin.profile_completed,
-        must_change_password: admin.must_change_password,
-      },
+    // 2. Try Manager table
+    const manager = await prisma.manager.findUnique({
+      where: { email: normalizedEmail },
     })
+
+    if (manager) {
+      if (await bcrypt.compare(password, manager.password)) {
+        if (!manager.is_active) throw new AppError('Account is not active', 403)
+
+        await prisma.manager.update({
+          where: { id: manager.id },
+          data: { last_login_at: new Date() },
+        })
+
+        const token = jwt.sign(
+          { managerId: manager.id, portal: 'manager' },
+          env.adminJwtSecret,
+          { expiresIn: '12h' },
+        )
+
+        res.json({
+          success: true,
+          token,
+          role: 'manager',
+          user: {
+            id: manager.id,
+            name: manager.name,
+            email: manager.email,
+          },
+          redirect: '/manager/dashboard',
+        })
+        return
+      }
+    }
+
+    throw new AppError('Invalid credentials', 401)
   } catch (err) {
     next(err)
   }
@@ -190,10 +230,12 @@ export async function adminListCelebrities(req: Request, res: Response, next: Ne
   }
 }
 
-export async function adminForgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function portalForgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { email } = req.body
     const normalizedEmail = String(email || '').trim().toLowerCase()
+
+    // 1. Try Admin table
     const admin = await prisma.admin.findUnique({ where: { email: normalizedEmail } })
     if (admin) {
       const resetToken = uuidv4()
@@ -205,37 +247,84 @@ export async function adminForgotPassword(req: Request, res: Response, next: Nex
         },
       })
       emailService.sendAdminPasswordResetEmail(normalizedEmail, admin.name, resetToken).catch(() => null)
+      res.json({ success: true, message: 'If this email is registered, a reset link has been sent.' })
+      return
     }
+
+    // 2. Try Manager table
+    const manager = await prisma.manager.findUnique({ where: { email: normalizedEmail } })
+    if (manager) {
+      const resetToken = uuidv4()
+      await prisma.manager.update({
+        where: { id: manager.id },
+        data: {
+          password_reset_token: resetToken,
+          password_reset_expires: new Date(Date.now() + 60 * 60 * 1000),
+        },
+      })
+      emailService.sendManagerPasswordResetEmail(normalizedEmail, manager.name, resetToken).catch(() => null)
+      res.json({ success: true, message: 'If this email is registered, a reset link has been sent.' })
+      return
+    }
+
     res.json({ success: true, message: 'If this email is registered, a reset link has been sent.' })
   } catch (err) {
     next(err)
   }
 }
 
-export async function adminResetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function portalResetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { token } = req.params
     const { password } = req.body
+
+    // 1. Try Admin table
     const admin = await prisma.admin.findFirst({
       where: {
         password_reset_token:   token,
         password_reset_expires: { gt: new Date() },
       },
     })
-    if (!admin) throw new AppError('Invalid or expired reset token', 400)
 
-    const hashedPassword = await bcrypt.hash(password, 12)
-    await prisma.admin.update({
-      where: { id: admin.id },
-      data: {
-        password:               hashedPassword,
-        must_change_password:   false,
-        password_reset_token:   null,
-        password_reset_expires: null,
+    if (admin) {
+      const hashedPassword = await bcrypt.hash(password, 12)
+      await prisma.admin.update({
+        where: { id: admin.id },
+        data: {
+          password:               hashedPassword,
+          must_change_password:   false,
+          password_reset_token:   null,
+          password_reset_expires: null,
+        },
+      })
+      res.json({ success: true, message: 'Password reset successfully. You can now sign in.' })
+      return
+    }
+
+    // 2. Try Manager table
+    const manager = await prisma.manager.findFirst({
+      where: {
+        password_reset_token: token,
+        password_reset_expires: { gt: new Date() },
       },
     })
 
-    res.json({ success: true, message: 'Password reset successfully. You can now sign in.' })
+    if (manager) {
+      const hashedPassword = await bcrypt.hash(password, 12)
+      await prisma.manager.update({
+        where: { id: manager.id },
+        data: {
+          password: hashedPassword,
+          must_change_password: false,
+          password_reset_token: null,
+          password_reset_expires: null,
+        },
+      })
+      res.json({ success: true, message: 'Password reset successfully. You can now sign in.' })
+      return
+    }
+
+    throw new AppError('Invalid or expired reset token', 400)
   } catch (err) {
     next(err)
   }

@@ -8,18 +8,12 @@ import { s3Service } from '../services/s3.service'
 import { aiService, ElevenLabsTTSModel, ElevenLabsSTSModel } from '../services/ai.service'
 import { settingsService } from '../services/settings.service'
 import { validateSubmission } from '../services/submission-validation.service'
+import { approvePreview, createRevision, escalateToSupport, listRevisions, adminListRevisions } from '../services/revision.service'
 import { AuthRequest } from '../middleware/auth'
 import { AdminRequest } from '../middleware/adminAuth'
 import { ManagerRequest } from '../middleware/managerAuth'
 import type { VideoJobStatus } from '../models/types'
-import {
-  approvePreview,
-  createRevision,
-  escalateToSupport,
-  listRevisions,
-  adminListRevisions,
-  getRevisionLimit,
-} from '../services/revision.service'
+import type { VideoJobProductType } from '@prisma/client'
 
 async function signJobUrls(job: Record<string, unknown>): Promise<Record<string, unknown>> {
   const celeb = job.celebrity as Record<string, unknown> | undefined
@@ -47,6 +41,22 @@ function generateRef(): string {
   const year = now.getFullYear()
   const seq = Math.floor(Math.random() * 9000) + 1000
   return `TWN-${year}-${seq}`
+}
+
+function normalizeProductType(value: unknown): VideoJobProductType {
+  const raw = String(value || '').trim().toLowerCase()
+  switch (raw) {
+    case 'greeting':
+      return 'greeting'
+    case 'video-ad':
+    case 'video_ad':
+      return 'video_ad'
+    case 'image-ad':
+    case 'image_ad':
+      return 'image_ad'
+    default:
+      throw new AppError('Invalid product type', 400)
+  }
 }
 
 async function appendStatusHistory(
@@ -183,8 +193,8 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
     const { celebrityId, productType, purpose, templateId, script, tone, duration, aspectRatio, resolution, channels,
             propImages, sceneNotes, backgroundImageUrl,
             voiceModel, voiceSpeed, voiceChangeEnabled, voiceChangeSourceUrl,
-            voiceAudioUrl, audioDuration } = req.body
-    const normalizedProductType = String(productType || '').trim()
+            voiceAudioUrl, audioDuration, resumeReferenceId } = req.body
+    const normalizedProductType = normalizeProductType(productType)
     if (normalizedProductType === 'greeting' && !voiceAudioUrl) {
       throw new AppError('voiceAudioUrl is required for greeting requests — complete a voice preview before submitting', 400)
     }
@@ -199,6 +209,7 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
         channels,
         duration,
         aspectRatio,
+        resumeReferenceId,
       },
       await getSubmissionUserContext(req.userId),
     )
@@ -214,49 +225,105 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
     })
     if (!user) throw new AppError('User not found', 404)
 
-    const statusHistory = [{
-      status: 'pending',
-      timestamp: new Date().toISOString(),
-      note: `Submission accepted on ${submissionValidation.approvalPath} route`,
-    }]
+    let job;
+    if (resumeReferenceId) {
+      const existing = await prisma.videoJob.findFirst({
+        where: {
+          reference_id: resumeReferenceId,
+          user_id: req.userId!,
+        },
+      })
 
-    const job = await prisma.videoJob.create({
-      data: {
-        reference_id:          generateRef(),
-        user_id:               req.userId!,
-        celebrity_id:          celebrityId,
-        product_type:          productType,
-        revision_limit:        getRevisionLimit(productType),
-        purpose:               submissionValidation.normalized.purpose,
-        template_id:           templateId,
-        approval_path:         submissionValidation.approvalPath,
-        script:                submissionValidation.normalized.script,
-        tone,
-        duration:              duration    || '30s',
-        aspect_ratio:          aspectRatio || '16:9',
-        resolution:            resolution  || '1080p',
-        channels:              submissionValidation.normalized.channels,
-        status_history:        statusHistory,
-        submission_context:    submissionValidation.submissionContext as any,
-        validation_result:     submissionValidation.validationSummary as any,
-        submission_audit:      [submissionValidation.auditEntry] as any,
-        business_verification_required: submissionValidation.businessVerificationRequired,
-        business_verification_passed:   submissionValidation.businessVerificationPassed,
-        estimated_price:       submissionValidation.pricingSnapshot.subtotal,
-        currency:              submissionValidation.pricingSnapshot.currency,
-        prop_images:           Array.isArray(propImages) && propImages.length ? propImages : [],
-        scene_notes:           sceneNotes          || undefined,
-        background_image_url:  backgroundImageUrl  || undefined,
-        voice_model:           voiceModel          || undefined,
-        voice_speed:           voiceSpeed != null ? Number(voiceSpeed) : undefined,
-        voice_change_enabled:  voiceChangeEnabled === true || voiceChangeEnabled === 'true' || false,
-        voice_change_source_url: voiceChangeSourceUrl || undefined,
-        voice_audio_url:       voiceAudioUrl       || undefined,
-        audio_duration:        audioDuration != null ? Number(audioDuration) : undefined,
-      },
-    })
+      if (existing) {
+        const previousHistory = Array.isArray(existing.status_history) ? existing.status_history : []
+        const restartedHistory = [
+          ...previousHistory,
+          { status: 'pending', timestamp: new Date().toISOString(), note: 'Resubmitted by customer' },
+        ]
 
-    await prisma.celebrity.update({ where: { id: celebrityId }, data: { total_orders: { increment: 1 } } })
+        job = await prisma.videoJob.update({
+          where: { id: existing.id },
+          data: {
+            celebrity_id:          celebrityId,
+            product_type:          normalizedProductType,
+            purpose:               submissionValidation.normalized.purpose,
+            template_id:           templateId,
+            approval_path:         submissionValidation.approvalPath,
+            script:                submissionValidation.normalized.script,
+            tone,
+            duration:              duration    || '30s',
+            aspect_ratio:          aspectRatio || '16:9',
+            resolution:            resolution  || '1080p',
+            channels:              submissionValidation.normalized.channels,
+            status:                'pending',
+            error_message:         null,
+            status_history:        restartedHistory as any,
+            submission_context:    submissionValidation.submissionContext as any,
+            validation_result:     submissionValidation.validationSummary as any,
+            submission_audit: {
+              push: submissionValidation.auditEntry as any,
+            },
+            business_verification_required: submissionValidation.businessVerificationRequired,
+            business_verification_passed:   submissionValidation.businessVerificationPassed,
+            estimated_price:       submissionValidation.pricingSnapshot.subtotal,
+            currency:              submissionValidation.pricingSnapshot.currency,
+            prop_images:           Array.isArray(propImages) && propImages.length ? propImages : [],
+            scene_notes:           sceneNotes          || undefined,
+            background_image_url:  backgroundImageUrl  || undefined,
+            voice_model:           voiceModel          || undefined,
+            voice_speed:           voiceSpeed != null ? Number(voiceSpeed) : undefined,
+            voice_change_enabled:  voiceChangeEnabled === true || voiceChangeEnabled === 'true' || false,
+            voice_change_source_url: voiceChangeSourceUrl || undefined,
+            voice_audio_url:       voiceAudioUrl       || undefined,
+            audio_duration:        audioDuration != null ? Number(audioDuration) : undefined,
+          },
+        })
+      }
+    }
+
+    if (!job) {
+      const statusHistory = [{
+        status: 'pending',
+        timestamp: new Date().toISOString(),
+        note: `Submission accepted on ${submissionValidation.approvalPath} route`,
+      }]
+
+      job = await prisma.videoJob.create({
+        data: {
+          reference_id:          generateRef(),
+          user_id:               req.userId!,
+          celebrity_id:          celebrityId,
+          product_type:          normalizedProductType,
+          purpose:               submissionValidation.normalized.purpose,
+          template_id:           templateId,
+          approval_path:         submissionValidation.approvalPath,
+          script:                submissionValidation.normalized.script,
+          tone,
+          duration:              duration    || '30s',
+          aspect_ratio:          aspectRatio || '16:9',
+          resolution:            resolution  || '1080p',
+          channels:              submissionValidation.normalized.channels,
+          status_history:        statusHistory,
+          submission_context:    submissionValidation.submissionContext as any,
+          validation_result:     submissionValidation.validationSummary as any,
+          submission_audit:      [submissionValidation.auditEntry] as any,
+          business_verification_required: submissionValidation.businessVerificationRequired,
+          business_verification_passed:   submissionValidation.businessVerificationPassed,
+          estimated_price:       submissionValidation.pricingSnapshot.subtotal,
+          currency:              submissionValidation.pricingSnapshot.currency,
+          prop_images:           Array.isArray(propImages) && propImages.length ? propImages : [],
+          scene_notes:           sceneNotes          || undefined,
+          background_image_url:  backgroundImageUrl  || undefined,
+          voice_model:           voiceModel          || undefined,
+          voice_speed:           voiceSpeed != null ? Number(voiceSpeed) : undefined,
+          voice_change_enabled:  voiceChangeEnabled === true || voiceChangeEnabled === 'true' || false,
+          voice_change_source_url: voiceChangeSourceUrl || undefined,
+          voice_audio_url:       voiceAudioUrl       || undefined,
+          audio_duration:        audioDuration != null ? Number(audioDuration) : undefined,
+        },
+      })
+      await prisma.celebrity.update({ where: { id: celebrityId }, data: { total_orders: { increment: 1 } } })
+    }
 
     await queueService.dispatchVideoJob(job.id)
     emailService.sendSubmissionConfirmationEmail({
@@ -269,13 +336,15 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
       slaHours: submissionValidation.slaHours,
       estimatedPrice: submissionValidation.pricingSnapshot.subtotal,
       currency: submissionValidation.pricingSnapshot.currency,
+      isResubmission: !!resumeReferenceId,
     }).catch(() => null)
 
-    res.status(201).json({ success: true, data: job })
+    res.status(job.created_at ? 201 : 200).json({ success: true, data: job })
   } catch (err) {
     next(err)
   }
 }
+
 
 export async function previewVoice(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -364,6 +433,10 @@ export async function getMyJobs(req: AuthRequest, res: Response, next: NextFunct
         where,
         include: {
           celebrity: { select: { name: true, name_ar: true, initials: true, avatar_color: true, thumbnail_url: true } },
+          refund_requests: {
+            orderBy: { created_at: 'desc' },
+            take: 1,
+          },
         },
         orderBy: { created_at: 'desc' },
         skip,
@@ -385,6 +458,10 @@ export async function getJob(req: AuthRequest, res: Response, next: NextFunction
       where: { reference_id: req.params.referenceId, user_id: req.userId },
       include: {
         celebrity: { select: { name: true, name_ar: true, initials: true, avatar_color: true, thumbnail_url: true } },
+        refund_requests: {
+          orderBy: { created_at: 'desc' },
+          take: 1,
+        },
       },
     })
     if (!raw) throw new AppError('Job not found', 404)
@@ -464,6 +541,10 @@ export async function adminListJobs(req: Request, res: Response, next: NextFunct
         include: {
           user:      { select: { name: true, email: true } },
           celebrity: { select: { name: true, initials: true } },
+          refund_requests: {
+            orderBy: { created_at: 'desc' },
+            take: 1,
+          },
         },
         orderBy: { created_at: 'desc' },
         skip,
