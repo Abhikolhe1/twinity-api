@@ -21,6 +21,8 @@ import imageAdRoutes      from './routes/imageAd.routes'
 import celebrityOnboardingRoutes from './routes/celebrityOnboarding.routes'
 import otpRoutes          from './routes/otp.routes'
 import managerLinkRoutes  from './routes/managerLink.routes'
+import managerDashboardRoutes from './routes/managerDashboard.routes'
+import managerRoutes      from './routes/manager.routes'
 
 const app = express()
 
@@ -84,6 +86,8 @@ app.use('/api/image-ads',     imageAdRoutes)
 app.use('/api/celebrity-onboarding', celebrityOnboardingRoutes)
 app.use('/api/otp',                  otpRoutes)
 app.use('/api/admin/celebrity-managers', managerLinkRoutes)
+app.use('/api/manager',              managerRoutes)
+app.use('/api/manager/dashboard',    managerDashboardRoutes)
 
 // ── 404 ───────────────────────────────────────────────────
 app.use((_req, res) => {

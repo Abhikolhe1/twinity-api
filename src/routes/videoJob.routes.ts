@@ -8,9 +8,11 @@ import {
   clientApprovePreview, clientRequestRevision, clientEscalateToSupport,
   clientGetRevisions, adminGetAllRevisions,
   adminSetPreviewUrl,
+  celebrityApproveJob, celebrityRejectJob, managerApproveJob, managerRejectJob,
 } from '../controllers/videoJob.controller'
 import { requireAuth } from '../middleware/auth'
 import { requireAdmin, requirePermission } from '../middleware/adminAuth'
+import { requireManager } from '../middleware/managerAuth'
 import { listMyCelebrityJobs } from '../controllers/celebrityOnboarding.controller'
 
 const router = Router()
@@ -37,6 +39,10 @@ router.post('/my/:referenceId/escalate-to-support', requireAuth, clientEscalateT
 router.get('/my/:referenceId/revisions', requireAuth, clientGetRevisions)
 
 router.get('/celebrity/my', requireAdmin, requirePermission('celebrity.orders.view'), listMyCelebrityJobs)
+router.post('/celebrity/my/:id/approve', requireAdmin, requirePermission('celebrity.orders.view'), celebrityApproveJob)
+router.post('/celebrity/my/:id/reject', requireAdmin, requirePermission('celebrity.orders.view'), celebrityRejectJob)
+router.post('/manager/:id/approve', requireManager, managerApproveJob)
+router.post('/manager/:id/reject', requireManager, managerRejectJob)
 
 // Admin routes
 router.get('/admin', requireAdmin, requirePermission('videos.view'), adminListJobs)

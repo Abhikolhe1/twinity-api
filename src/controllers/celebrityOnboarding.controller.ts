@@ -4,6 +4,7 @@ import prisma from '../lib/prisma'
 import { AdminRequest } from '../middleware/adminAuth'
 import { AppError } from '../middleware/errorHandler'
 import { emailService } from '../services/email.service'
+import { createOrRefreshManagerAccount, ensureManagerLink } from '../services/managerAccess.service'
 import { s3Service } from '../services/s3.service'
 
 const CELEBRITY_PORTAL_ROLE = 'celebrity_portal'
@@ -675,6 +676,30 @@ export async function updateMyCelebrityProfile(req: AdminRequest, res: Response,
     })
 
     const profileCompleted = isCelebrityProfileComplete(updated)
+    const managerSettings = normalizeManagerSettings(updated.manager_settings)
+
+    if (managerSettings.selfManaged) {
+      await prisma.celebrityManagerLink.updateMany({
+        where: { celebrity_id: celebrityId, manager_id: { not: null } },
+        data: { is_active: false },
+      })
+    } else if (profileCompleted) {
+      const { manager } = await createOrRefreshManagerAccount({
+        name: managerSettings.managerName,
+        email: managerSettings.managerEmail,
+        phone: managerSettings.managerPhone,
+        agencyName: managerSettings.agencyName,
+      })
+
+      await ensureManagerLink({
+        celebrityId,
+        managerId: manager.id,
+        permissions: managerSettings.permissions,
+        linkedBy: req.adminId,
+        notes: managerSettings.agencyName ? `Agency: ${managerSettings.agencyName}` : null,
+      })
+    }
+
     await prisma.admin.update({
       where: { id: req.adminId },
       data: { profile_completed: profileCompleted },

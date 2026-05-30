@@ -185,6 +185,13 @@ function statusBadge(status: string): string {
   return `<span style="display:inline-block;background:${s.bg};color:${s.color};padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;">${s.label}</span>`
 }
 
+function productTypeLabel(productType: string): string {
+  if (productType === 'greeting') return 'Greeting'
+  if (productType === 'video-ad' || productType === 'video_ad') return 'Video Ad'
+  if (productType === 'image-ad' || productType === 'image_ad') return 'Image Ad'
+  return productType.replace(/[-_]/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
+}
+
 // ── Email service ───────────────────────────────────────────────
 
 export const emailService = {
@@ -290,8 +297,36 @@ export const emailService = {
     await send(email, 'Reset your Twinity Admin password', layout('Reset your Twinity Admin password', 'Admin reset link inside — expires in 1 hour.', body))
   },
 
+  async sendManagerPasswordResetEmail(email: string, name: string, token: string): Promise<void> {
+    const link = `${env.cors.adminUrl}/reset-password/${token}`
+    const firstName = name.split(' ')[0]
+    const body = `
+      <h1 style="margin:0 0 6px;font-size:24px;font-weight:700;color:#1a0a30;">Manager password reset</h1>
+      <p style="margin:0 0 28px;font-size:15px;color:#4a3465;line-height:1.6;">
+        Hi ${firstName}, a password reset was requested for your Twinity <strong>Manager Portal</strong> account.
+        Click the button below to set a new password.
+      </p>
+
+      ${ctaButton(link, 'Reset Manager Password')}
+      ${fallbackLink(link)}
+
+      ${divider()}
+
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+        <tr>
+          <td style="background:#FFF7ED;border-left:3px solid #F59E0B;border-radius:0 8px 8px 0;padding:14px 18px;">
+            <p style="margin:0;font-size:13px;color:#92400E;line-height:1.6;">
+              <strong>Security notice:</strong> This link expires in <strong>1 hour</strong> and is single-use.
+            </p>
+          </td>
+        </tr>
+      </table>
+    `
+    await send(email, 'Reset your Twinity Manager password', layout('Reset your Twinity Manager password', 'Manager reset link inside — expires in 1 hour.', body))
+  },
+
   async sendCelebrityPortalWelcomeEmail(email: string, name: string, temporaryPassword: string): Promise<void> {
-    const loginLink = `${env.cors.adminUrl}/login`
+    const loginLink = `${env.cors.adminUrl}/celebrity-login`
     const firstName = name.split(' ')[0]
     const body = `
       <h1 style="margin:0 0 6px;font-size:24px;font-weight:700;color:#1a0a30;">Your Celebrity Portal is ready</h1>
@@ -327,6 +362,45 @@ export const emailService = {
       email,
       'Your Twinity Celebrity Portal access',
       layout('Your Twinity Celebrity Portal access', 'Your celebrity portal access has been approved.', body),
+    )
+  },
+
+  async sendManagerPortalWelcomeEmail(email: string, name: string, temporaryPassword: string): Promise<void> {
+    const loginLink = `${env.cors.adminUrl}/manager-login`
+    const firstName = name.split(' ')[0]
+    const body = `
+      <h1 style="margin:0 0 6px;font-size:24px;font-weight:700;color:#1a0a30;">Your Manager Portal is ready</h1>
+      <p style="margin:0 0 24px;font-size:15px;color:#4a3465;line-height:1.6;">
+        Hi ${firstName}, you have been added as a manager in Twinity. You can now sign in and manage the celebrities assigned to you.
+      </p>
+
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+             style="background:#F8F5FF;border-radius:12px;padding:4px 20px;margin-bottom:28px;">
+        <tbody>
+          ${detailRow('Login URL', `<a href="${loginLink}" style="color:#9a78fe;">${loginLink}</a>`)}
+          ${detailRow('Email', email)}
+          ${detailRow('Temporary Password', `<span style="font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;">${temporaryPassword}</span>`)}
+        </tbody>
+      </table>
+
+      ${ctaButton(loginLink, 'Open Manager Portal')}
+
+      ${divider()}
+
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+        <tr>
+          <td style="background:#FFF7ED;border-left:3px solid #F59E0B;border-radius:0 8px 8px 0;padding:14px 18px;">
+            <p style="margin:0;font-size:13px;color:#92400E;line-height:1.6;">
+              <strong>First sign-in:</strong> Use the temporary password above and update it right away from the portal recovery flow if needed.
+            </p>
+          </td>
+        </tr>
+      </table>
+    `
+    await send(
+      email,
+      'Your Twinity Manager Portal access',
+      layout('Your Twinity Manager Portal access', 'Your manager portal access has been approved.', body),
     )
   },
 
@@ -466,6 +540,74 @@ export const emailService = {
       userEmail,
       `Order ${referenceId} — ${msg.headline}`,
       layout('Order Update — Twinity', msg.headline, body),
+    )
+  },
+
+  async sendSubmissionConfirmationEmail(params: {
+    userEmail: string
+    userName: string
+    referenceId: string
+    productType: string
+    purpose: string
+    approvalPath?: string | null
+    slaHours?: number
+    estimatedPrice?: number
+    currency?: string
+    isResubmission?: boolean
+  }): Promise<void> {
+    const dashLink = `${env.cors.clientUrl}/studio/requests/${params.referenceId}`
+    const firstName = params.userName.split(' ')[0]
+    const requestLabel = productTypeLabel(params.productType)
+    const submissionLabel = params.isResubmission ? 'request resubmitted' : 'request submitted'
+    const approvalPathLabel = params.approvalPath === 'fast_track' ? 'Fast-track review' : 'Full review'
+    const slaText = params.slaHours ? `${params.slaHours} hours` : 'our standard review window'
+    const estimatedPrice = Number.isFinite(params.estimatedPrice)
+      ? `${params.currency || 'SAR'} ${(params.estimatedPrice || 0).toLocaleString()}`
+      : 'Pending confirmation'
+
+    const body = `
+      <h1 style="margin:0 0 6px;font-size:24px;font-weight:700;color:#1a0a30;">Your ${requestLabel.toLowerCase()} is confirmed</h1>
+      <p style="margin:0 0 24px;font-size:15px;color:#4a3465;line-height:1.6;">
+        Hi ${firstName}, your ${requestLabel.toLowerCase()} has been ${params.isResubmission ? 'resubmitted' : 'submitted'} successfully.
+        We&apos;ve logged everything and routed it to the next review stage.
+      </p>
+
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+             style="background:#F8F5FF;border-radius:12px;padding:4px 20px;margin-bottom:28px;">
+        <tbody>
+          ${detailRow('Reference', params.referenceId)}
+          ${detailRow('Request type', requestLabel)}
+          ${detailRow('Purpose', params.purpose)}
+          ${detailRow('Review route', approvalPathLabel)}
+          ${detailRow('Estimated SLA', slaText)}
+          ${detailRow('Estimated price', estimatedPrice)}
+        </tbody>
+      </table>
+
+      ${ctaButton(dashLink, 'View Request Details')}
+      ${fallbackLink(dashLink)}
+
+      ${divider()}
+
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+        <tr>
+          <td style="background:#F8F5FF;border-left:3px solid #9a78fe;border-radius:0 8px 8px 0;padding:14px 18px;">
+            <p style="margin:0;font-size:13px;color:#4a3465;line-height:1.6;">
+              <strong>What happens next?</strong> We&apos;ll keep this request updated in your portal and email you again when its status changes.
+            </p>
+          </td>
+        </tr>
+      </table>
+    `
+
+    await send(
+      params.userEmail,
+      `${params.referenceId} — ${params.isResubmission ? 'Request resubmitted' : 'Request submitted'}`,
+      layout(
+        'Submission Confirmation — Twinity',
+        `${requestLabel} ${submissionLabel}.`,
+        body,
+      ),
     )
   },
 
