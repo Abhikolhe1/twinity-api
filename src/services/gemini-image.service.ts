@@ -110,9 +110,7 @@ export async function generateGeminiImage(params: {
 
   const upload = await s3Service.upload(params.s3Bucket, key, imageBuffer, mimeType)
 
-  const imageUrl = upload.stub
-    ? upload.url
-    : await s3Service.getPresignedUrl(params.s3Bucket, upload.key, 86400)
+  const imageUrl = upload.url
 
   logger.info(`[GeminiImage] Done: ${params.referenceId} → ${imageUrl}`)
   return { imageUrl, mimeType, status: 'generated' }

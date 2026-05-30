@@ -223,10 +223,10 @@ async function applyWatermark(videoUrl: string, referenceId: string): Promise<Wa
       s3Service.upload(s3Bucket, `jobs/${referenceId}/preview-watermarked.mp4`, outBuffer,   'video/mp4'),
     ])
 
-    const [cleanUrl, watermarkedUrl] = await Promise.all([
-      cleanUpload.stub       ? cleanUpload.url       : s3Service.getPresignedUrl(s3Bucket, cleanUpload.key),
-      watermarkedUpload.stub ? watermarkedUpload.url : s3Service.getPresignedUrl(s3Bucket, watermarkedUpload.key),
-    ])
+    // Store the raw S3 URL (no presigned query string) — presigning happens
+    // on-demand in signJobUrls when serving the job to clients.
+    const cleanUrl       = cleanUpload.url
+    const watermarkedUrl = watermarkedUpload.url
 
     logger.info(`[Watermark] Done: job=${referenceId}`)
     return { cleanUrl, watermarkedUrl }

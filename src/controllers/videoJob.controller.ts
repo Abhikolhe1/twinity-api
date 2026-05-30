@@ -9,14 +9,34 @@ import { settingsService } from '../services/settings.service'
 import { validateSubmission } from '../services/submission-validation.service'
 import { AuthRequest } from '../middleware/auth'
 import type { VideoJobStatus } from '../models/types'
+import {
+  approvePreview,
+  createRevision,
+  escalateToSupport,
+  listRevisions,
+  adminListRevisions,
+  getRevisionLimit,
+} from '../services/revision.service'
 
-async function signJobThumbnail(job: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function signJobUrls(job: Record<string, unknown>): Promise<Record<string, unknown>> {
   const celeb = job.celebrity as Record<string, unknown> | undefined
-  if (!celeb?.thumbnail_url) return job
+  const [thumbnailUrl, watermarkedUrl, previewUrl, finalVideoUrl] = await Promise.all([
+    s3Service.presignIfS3(celeb?.thumbnail_url as string | undefined),
+    s3Service.presignIfS3(job.watermarked_url as string | undefined),
+    s3Service.presignIfS3(job.preview_url as string | undefined),
+    s3Service.presignIfS3(job.final_video_url as string | undefined),
+  ])
   return {
     ...job,
-    celebrity: { ...celeb, thumbnail_url: await s3Service.presignIfS3(celeb.thumbnail_url as string) },
+    watermarked_url: watermarkedUrl  ?? job.watermarked_url  ?? null,
+    preview_url:     previewUrl      ?? job.preview_url      ?? null,
+    final_video_url: finalVideoUrl   ?? job.final_video_url  ?? null,
+    celebrity: celeb ? { ...celeb, thumbnail_url: thumbnailUrl ?? celeb.thumbnail_url } : celeb,
   }
+}
+
+async function signJobThumbnail(job: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return signJobUrls(job)
 }
 
 function generateRef(): string {
@@ -105,6 +125,7 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
         user_id:               req.userId!,
         celebrity_id:          celebrityId,
         product_type:          productType,
+        revision_limit:        getRevisionLimit(productType),
         purpose:               submissionValidation.normalized.purpose,
         template_id:           templateId,
         approval_path:         submissionValidation.approvalPath,
@@ -669,5 +690,156 @@ export async function adminEnableDownload(req: Request, res: Response, next: Nex
     } else {
       next(err)
     }
+  }
+}
+
+export async function adminSetPreviewUrl(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id } = req.params
+    const { watermarked_url, preview_url } = req.body as { watermarked_url?: string; preview_url?: string }
+
+    const rawInput = watermarked_url?.trim() || preview_url?.trim()
+    if (!rawInput) throw new AppError('watermarked_url is required', 400)
+    // Strip presigned query string so we always store the clean base URL
+    const url = rawInput.includes('?') ? rawInput.split('?')[0] : rawInput
+
+    const job = await prisma.videoJob.findUnique({ where: { id } })
+    if (!job) throw new AppError('Job not found', 404)
+
+    const history = await appendStatusHistory(id, {
+      status:    'review',
+      timestamp: new Date().toISOString(),
+      note:      'Preview URL set by admin — moved to review',
+    })
+
+    const updated = await prisma.videoJob.update({
+      where: { id },
+      data:  { watermarked_url: url, status: 'review', status_history: history as any },
+    })
+
+    res.json({ success: true, data: updated, message: 'Preview URL set and job moved to review' })
+  } catch (err) {
+    next(err)
+  }
+}
+
+// ── TWIN-50: Preview & Revision endpoints ────────────────────────────────
+
+export async function clientApprovePreview(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const job = await prisma.videoJob.findFirst({
+      where: { reference_id: req.params.referenceId, user_id: req.userId },
+      select: { id: true },
+    })
+    if (!job) throw new AppError('Job not found', 404)
+
+    const user = await prisma.user.findUnique({ where: { id: req.userId }, select: { name: true } })
+    await approvePreview({ jobId: job.id, userId: req.userId!, actorName: user?.name ?? 'Client' })
+
+    res.json({ success: true, message: 'Preview approved. Production will proceed to final delivery.' })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function clientRequestRevision(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { reason } = req.body as { reason?: string }
+    if (!reason?.trim()) throw new AppError('reason is required', 400)
+
+    const job = await prisma.videoJob.findFirst({
+      where: { reference_id: req.params.referenceId, user_id: req.userId },
+      select: { id: true },
+    })
+    if (!job) throw new AppError('Job not found', 404)
+
+    const user = await prisma.user.findUnique({ where: { id: req.userId }, select: { name: true } })
+    const result = await createRevision({
+      jobId:     job.id,
+      userId:    req.userId!,
+      reason:    reason.trim(),
+      actorName: user?.name ?? 'Client',
+    })
+
+    if (!result.accepted) {
+      res.status(422).json({
+        success: false,
+        classification: result.classification,
+        message: result.message,
+      })
+      return
+    }
+
+    res.json({
+      success:        true,
+      revision:       result.revision,
+      attemptNumber:  result.attemptNumber,
+      limitReached:   result.limitReached,
+      message: result.limitReached
+        ? 'Revision submitted. You have used your last revision — this request has been automatically escalated to our support team.'
+        : 'Revision submitted successfully.',
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function clientEscalateToSupport(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { reason } = req.body as { reason?: string }
+
+    const job = await prisma.videoJob.findFirst({
+      where: { reference_id: req.params.referenceId, user_id: req.userId },
+      select: { id: true },
+    })
+    if (!job) throw new AppError('Job not found', 404)
+
+    const user = await prisma.user.findUnique({ where: { id: req.userId }, select: { name: true } })
+    await escalateToSupport({ jobId: job.id, userId: req.userId!, actorName: user?.name ?? 'Client', reason })
+
+    res.json({ success: true, message: 'Your request has been escalated to our support team. An Account Manager will contact you shortly.' })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function clientGetRevisions(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const job = await prisma.videoJob.findFirst({
+      where: { reference_id: req.params.referenceId, user_id: req.userId },
+      select: {
+        id: true, revision_count: true, revision_limit: true,
+        is_escalated_to_support: true, product_type: true,
+      },
+    })
+    if (!job) throw new AppError('Job not found', 404)
+
+    const revisions = await listRevisions(job.id)
+    res.json({
+      success:  true,
+      data:     revisions,
+      meta: {
+        revisionCount:           job.revision_count,
+        revisionLimit:           job.revision_limit,
+        revisionsRemaining:      Math.max(0, job.revision_limit - job.revision_count),
+        isEscalatedToSupport:    job.is_escalated_to_support,
+      },
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function adminGetAllRevisions(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { status, page = 1, limit = 20 } = req.query
+    const result = await adminListRevisions({
+      status: status as string | undefined,
+      page:   Number(page),
+      limit:  Number(limit),
+    })
+    res.json({ success: true, ...result })
+  } catch (err) {
+    next(err)
   }
 }

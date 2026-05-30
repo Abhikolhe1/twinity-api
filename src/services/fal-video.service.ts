@@ -105,9 +105,8 @@ async function archiveVideoFromFal(falUrl: string, referenceId: string, s3Bucket
     const buffer  = Buffer.from(await res.arrayBuffer())
     const upload  = await s3Service.upload(s3Bucket, `jobs/${referenceId}/final-video.mp4`, buffer, 'video/mp4')
     if (upload.stub) return falUrl
-    const permanent = await s3Service.getPresignedUrl(s3Bucket, upload.key, 60 * 60 * 24 * 7)
-    logger.info(`[FalVideo] Archived to S3 for ${referenceId}: ${permanent}`)
-    return permanent
+    logger.info(`[FalVideo] Archived to S3 for ${referenceId}: ${upload.url}`)
+    return upload.url
   } catch (err) {
     logger.warn(`[FalVideo] S3 archive failed for ${referenceId} — using fal URL: ${String(err)}`)
     return falUrl

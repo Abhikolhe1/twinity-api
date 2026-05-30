@@ -78,6 +78,19 @@ enum CelebrityOnboardingStatus {
   rejected
 }
 
+enum RevisionType {
+  minor
+  material
+  escalation
+}
+
+enum RevisionStatus {
+  pending
+  approved
+  rejected
+  escalated
+}
+
 // ── Models ─────────────────────────────────────────────────────────────────────
 
 model User {
@@ -210,12 +223,17 @@ model VideoJob {
   processed_script      String?
   error_message         String?
   delivered_at          DateTime?
+  revision_count                 Int       @default(0)
+  revision_limit                 Int       @default(1)
+  is_escalated_to_support        Boolean   @default(false)
+  client_preview_approved_at     DateTime?
   created_at            DateTime            @default(now())
   updated_at            DateTime            @updatedAt
 
-  user      User      @relation(fields: [user_id], references: [id])
-  celebrity Celebrity @relation(fields: [celebrity_id], references: [id])
-  leads     Lead[]
+  user              User              @relation(fields: [user_id], references: [id])
+  celebrity         Celebrity         @relation(fields: [celebrity_id], references: [id])
+  leads             Lead[]
+  preview_revisions PreviewRevision[]
 
   @@index([user_id, status])
   @@index([status])
@@ -403,6 +421,28 @@ model OtpCode {
   @@index([email, type])
   @@index([expires_at])
   @@map("otp_codes")
+}
+
+model PreviewRevision {
+  id                   String         @id @default(uuid())
+  video_job_id         String
+  attempt_number       Int
+  type                 RevisionType   @default(minor)
+  reason               String
+  classification       RevisionType?
+  classification_note  String?
+  status               RevisionStatus @default(pending)
+  submitted_by_user_id String
+  provider_job_id      String?
+  escalation_note      String?
+  created_at           DateTime       @default(now())
+  updated_at           DateTime       @updatedAt
+
+  video_job VideoJob @relation(fields: [video_job_id], references: [id])
+
+  @@index([video_job_id])
+  @@index([status])
+  @@map("preview_revisions")
 }
 
 model CelebrityManagerLink {

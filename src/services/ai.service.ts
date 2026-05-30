@@ -367,6 +367,12 @@ export const aiService = {
         const text = await res.text()
         if (!text) throw new Error(`Creatify Aurora (${res.status}): empty response body`)
         const data = JSON.parse(text) as { id?: string; status?: string }
+        // Creatify returns an array like ["Not enough credits"] on billing errors
+        if (Array.isArray(data)) {
+          const msg = (data as string[]).join(', ')
+          if (msg.toLowerCase().includes('credit')) throw new Error(`Creatify account has no credits — top up at creatify.ai to continue (${msg})`)
+          throw new Error(`Creatify Aurora rejected the request: ${msg}`)
+        }
         if (!data.id) throw new Error(`Creatify Aurora: no id in response: ${text}`)
         logger.info(`[AI] Creatify Aurora job submitted: id=${data.id}`)
         return { jobId: data.id, status: 'submitted' as const }
