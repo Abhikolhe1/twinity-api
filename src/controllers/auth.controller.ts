@@ -44,7 +44,19 @@ export async function register(req: Request, res: Response, next: NextFunction):
       success: true,
       message: 'Account created. Please verify your email.',
       token,
-      user: { id: user.id, name: user.name, email: user.email, status: user.status, is_email_verified: false },
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        status: user.status,
+        is_email_verified: false,
+        account_type: user.account_type,
+        phone: user.phone || undefined,
+        company: user.company || undefined,
+        avatar_url: user.avatar_url || undefined,
+        auth_provider: user.auth_provider,
+        has_email_password: user.has_email_password,
+      },
     })
   } catch (err) {
     next(err)
@@ -57,6 +69,7 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
     const user = await prisma.user.findUnique({ where: { email }, select: {
       id: true, name: true, email: true, password: true, status: true,
       auth_provider: true, has_email_password: true, is_email_verified: true,
+      phone: true, company: true, avatar_url: true, account_type: true,
     }})
     if (!user || !(await bcrypt.compare(password, user.password))) {
       throw new AppError('Invalid email or password', 401)
@@ -72,7 +85,19 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
     res.json({
       success: true,
       token,
-      user: { id: user.id, name: user.name, email: user.email, status: user.status, is_email_verified: user.is_email_verified },
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        status: user.status,
+        is_email_verified: user.is_email_verified,
+        account_type: user.account_type,
+        phone: user.phone || undefined,
+        company: user.company || undefined,
+        avatar_url: user.avatar_url || undefined,
+        auth_provider: user.auth_provider,
+        has_email_password: user.has_email_password,
+      },
     })
   } catch (err) {
     next(err)
@@ -155,7 +180,7 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
 
 export async function googleAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { accessToken } = req.body
+    const { accessToken, accountType } = req.body
     if (!accessToken) throw new AppError('Access token required', 400)
 
     const googleRes = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${accessToken}`)
@@ -163,6 +188,8 @@ export async function googleAuth(req: Request, res: Response, next: NextFunction
     const googleUser = await googleRes.json() as { sub: string; email: string; name: string; picture?: string }
 
     if (!googleUser.email) throw new AppError('Google account has no email', 400)
+
+    const mappedAccountType = ['individual', 'influencer', 'agency'].includes(accountType) ? accountType : 'individual'
 
     let user = await prisma.user.findUnique({ where: { email: googleUser.email } })
     if (!user) {
@@ -177,6 +204,7 @@ export async function googleAuth(req: Request, res: Response, next: NextFunction
           is_email_verified:  true,
           status:             'active',
           avatar_url:         googleUser.picture,
+          account_type:       mappedAccountType,
         },
       })
     } else {
@@ -188,6 +216,7 @@ export async function googleAuth(req: Request, res: Response, next: NextFunction
         where: { id: user.id },
         data: {
           last_login_at: new Date(),
+          account_type:  mappedAccountType,
           ...(googleUser.picture && !user.avatar_url ? { avatar_url: googleUser.picture } : {}),
         },
       })
@@ -198,7 +227,19 @@ export async function googleAuth(req: Request, res: Response, next: NextFunction
     res.json({
       success: true,
       token,
-      user: { id: user!.id, name: user!.name, email: user!.email, status: user!.status, is_email_verified: user!.is_email_verified },
+      user: {
+        id: user!.id,
+        name: user!.name,
+        email: user!.email,
+        status: user!.status,
+        is_email_verified: user!.is_email_verified,
+        account_type: user!.account_type,
+        phone: user!.phone || undefined,
+        company: user!.company || undefined,
+        avatar_url: user!.avatar_url || undefined,
+        auth_provider: user!.auth_provider,
+        has_email_password: user!.has_email_password,
+      },
     })
   } catch (err) {
     next(err)
@@ -247,11 +288,13 @@ export async function setPassword(req: AuthRequest, res: Response, next: NextFun
 
 export async function updateProfile(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { name, avatar_url } = req.body
+    const { name, avatar_url, phone, company } = req.body
 
     const data: Record<string, unknown> = {}
     if (name && typeof name === 'string') data.name = name.trim()
     if (avatar_url !== undefined) data.avatar_url = avatar_url
+    if (phone !== undefined) data.phone = phone ? String(phone).trim() : null
+    if (company !== undefined) data.company = company ? String(company).trim() : null
 
     if (Object.keys(data).length === 0) {
       res.json({ success: true, message: 'Nothing to update' })
