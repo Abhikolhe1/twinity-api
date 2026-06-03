@@ -327,8 +327,7 @@ function isCelebrityProfileComplete(celebrity: {
     celebrity.allowed_content_categories.length &&
     celebrity.prohibited_industries.length &&
     celebrity.competitor_brands.length &&
-    geographicAvailability.mode &&
-    (geographicAvailability.mode !== 'custom' || geographicAvailability.allowedRegions.length) &&
+    geographicAvailability.allowedRegions.length &&
     toneStylePreferences.communicationStyle &&
     toneStylePreferences.visualStyle &&
     toneStylePreferences.endorsedTopics.length &&
@@ -426,8 +425,8 @@ async function applyCelebrityProfileUpdate(
   }
   if ('geographic_availability' in body) {
     const geographicAvailability = normalizeGeographicAvailability(body.geographic_availability)
-    if (geographicAvailability.mode === 'custom' && geographicAvailability.allowedRegions.length === 0) {
-      throw new AppError('Custom geographic availability requires at least one allowed region', 400)
+    if (geographicAvailability.allowedRegions.length === 0) {
+      throw new AppError('At least one allowed region is required', 400)
     }
   }
   if ('tone_style_preferences' in body) {
@@ -487,7 +486,7 @@ async function applyCelebrityProfileUpdate(
     }
   }
 
-  const optionalStringFields = ['region', 'bio', 'bio_ar', 'thumbnail_url', 'contact_phone', 'avatar_color'] as const
+  const optionalStringFields = ['region', 'bio', 'bio_ar', 'thumbnail_url', 'contact_phone', 'avatar_color', 'voice_model_id'] as const
   for (const field of optionalStringFields) {
     if (field in body) {
       const value = body[field]
@@ -564,11 +563,7 @@ export async function submitCelebrityOnboarding(req: Request, res: Response, nex
     })
 
     if (existing) {
-      res.status(202).json({
-        success: true,
-        message: 'Application received. We will contact you after review.',
-      })
-      return
+      throw new AppError('An application with this email already exists', 409)
     }
 
     const slug = await createUniqueSlug(String(name))

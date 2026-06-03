@@ -332,48 +332,98 @@ export async function portalResetPassword(req: Request, res: Response, next: Nex
 
 export async function updateUserStatus(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { status, reason } = req.body
+    const { status, reason, name, phone, company, account_type } = req.body
     const target = await prisma.user.findUnique({
       where: { id: req.params.id },
-      select: { id: true, name: true, email: true, status: true },
+      select: { id: true, name: true, email: true, status: true, phone: true, company: true, account_type: true },
     })
     if (!target) throw new AppError('User not found', 404)
 
-    const updateData: Record<string, unknown> = { status }
-    if (status === 'blocked') {
-      updateData.suspension_reason     = reason ?? null
-      updateData.suspended_at          = new Date()
-      updateData.suspended_by_admin_id = req.adminId
-    } else {
-      updateData.suspension_reason     = null
-      updateData.suspended_at          = null
-      updateData.suspended_by_admin_id = null
+    const updateData: Record<string, unknown> = {}
+    if (typeof name === 'string') updateData.name = name.trim()
+    if (typeof phone === 'string') updateData.phone = phone.trim() || null
+    if (typeof company === 'string') updateData.company = company.trim() || null
+    if (typeof account_type === 'string') updateData.account_type = account_type
+
+    if (status) {
+      updateData.status = status
+      if (status === 'blocked') {
+        updateData.suspension_reason     = reason ?? null
+        updateData.suspended_at          = new Date()
+        updateData.suspended_by_admin_id = req.adminId
+      } else {
+        updateData.suspension_reason     = null
+        updateData.suspended_at          = null
+        updateData.suspended_by_admin_id = null
+      }
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      throw new AppError('No user changes were provided', 400)
     }
 
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data:  updateData,
-      select: { id: true, name: true, email: true, status: true, suspension_reason: true, suspended_at: true, created_at: true, updated_at: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        company: true,
+        account_type: true,
+        status: true,
+        suspension_reason: true,
+        suspended_at: true,
+        created_at: true,
+        updated_at: true,
+      },
     })
 
     const actor = await prisma.admin.findUnique({ where: { id: req.adminId }, select: { name: true, role: true } })
-    await auditLogService.log({
-      actorId:    req.adminId!,
-      actorName:  actor?.name ?? 'Admin',
-      actorRole:  actor?.role ?? 'admin',
-      action:     `user.${status}`,
-      targetType: 'user',
-      targetId:   target.id,
-      targetName: target.name,
-      reason,
-      metadata:   { previousStatus: target.status, newStatus: status },
-    })
+    if (status) {
+      await auditLogService.log({
+        actorId:    req.adminId!,
+        actorName:  actor?.name ?? 'Admin',
+        actorRole:  actor?.role ?? 'admin',
+        action:     `user.${status}`,
+        targetType: 'user',
+        targetId:   target.id,
+        targetName: target.name,
+        reason,
+        metadata:   { previousStatus: target.status, newStatus: status },
+      })
+    } else {
+      await auditLogService.log({
+        actorId:    req.adminId!,
+        actorName:  actor?.name ?? 'Admin',
+        actorRole:  actor?.role ?? 'admin',
+        action:     'user.updated',
+        targetType: 'user',
+        targetId:   target.id,
+        targetName: target.name,
+        metadata: {
+          previous: {
+            name: target.name,
+            phone: target.phone,
+            company: target.company,
+            account_type: target.account_type,
+          },
+          next: {
+            name: user.name,
+            phone: user.phone,
+            company: user.company,
+            account_type: user.account_type,
+          },
+        },
+      })
+    }
 
     if (status === 'blocked') {
       emailService.sendAccountSuspendedEmail(target.email, target.name, reason).catch(() => null)
     }
 
-    res.json({ success: true, data: user, message: `User ${status}` })
+    res.json({ success: true, data: user, message: status ? `User ${status}` : 'User updated' })
   } catch (err) {
     next(err)
   }

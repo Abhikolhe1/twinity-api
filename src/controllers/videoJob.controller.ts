@@ -68,6 +68,18 @@ async function appendStatusHistory(
   return [...history, entry]
 }
 
+const CELEBRITY_REVIEW_APPROVAL_NOTE = 'Approved by celebrity for final delivery'
+const MANAGER_REVIEW_APPROVAL_NOTE = 'Approved by manager for final delivery'
+
+function hasCreatorReviewApproval(statusHistory: unknown): boolean {
+  if (!Array.isArray(statusHistory)) return false
+  return statusHistory.some((entry) => {
+    if (!entry || typeof entry !== 'object') return false
+    const note = String((entry as Record<string, unknown>).note || '')
+    return note === CELEBRITY_REVIEW_APPROVAL_NOTE || note === MANAGER_REVIEW_APPROVAL_NOTE
+  })
+}
+
 function hasReviewableMedia(job: {
   preview_url?: string | null
   watermarked_url?: string | null
@@ -121,10 +133,42 @@ async function resolveReviewOwnership(jobId: string) {
   }
 }
 
-async function approveJobById(jobId: string, note: string) {
+async function markCreatorApprovalById(jobId: string, note: string) {
   const job = await prisma.videoJob.findUnique({ where: { id: jobId } })
   if (!job) throw new AppError('Job not found', 404)
   if (job.status !== 'review') throw new AppError('Job must be in review status to approve', 400)
+  if (hasCreatorReviewApproval(job.status_history)) {
+    return job
+  }
+
+  const history = await appendStatusHistory(job.id, { status: 'review', timestamp: new Date().toISOString(), note })
+  const updated = await prisma.videoJob.update({
+    where: { id: job.id },
+    data: {
+      status_history: history as any,
+    },
+  })
+
+  return updated
+}
+
+function assertDeliveryApprovals(job: {
+  status_history?: unknown
+  client_preview_approved_at?: Date | null
+}) {
+  if (!hasCreatorReviewApproval(job.status_history)) {
+    throw new AppError('Cannot deliver until the celebrity or assigned manager has approved the review', 400)
+  }
+  if (!job.client_preview_approved_at) {
+    throw new AppError('Cannot deliver until the client has approved the preview review', 400)
+  }
+}
+
+async function deliverJobById(jobId: string, note: string) {
+  const job = await prisma.videoJob.findUnique({ where: { id: jobId } })
+  if (!job) throw new AppError('Job not found', 404)
+  if (job.status !== 'review') throw new AppError('Job must be in review status to deliver', 400)
+  assertDeliveryApprovals(job)
 
   const history = await appendStatusHistory(job.id, { status: 'delivered', timestamp: new Date().toISOString(), note })
   const updated = await prisma.videoJob.update({
@@ -578,6 +622,9 @@ export async function adminUpdateJobStatus(req: Request, res: Response, next: Ne
     if (prismaStatus === 'review' && !env.allowReviewWithoutMedia && !hasReviewableMedia(job)) {
       throw new AppError('Cannot move request to review until a preview or final media URL exists', 400)
     }
+    if (prismaStatus === 'delivered') {
+      assertDeliveryApprovals(job)
+    }
 
     const history = await appendStatusHistory(id, { status, timestamp: new Date().toISOString(), note })
     const updateData: Record<string, unknown> = {
@@ -602,8 +649,8 @@ export async function adminUpdateJobStatus(req: Request, res: Response, next: Ne
 
 export async function adminApproveJob(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const updated = await approveJobById(req.params.id, 'Approved by CS team')
-    res.json({ success: true, data: updated, message: 'Job approved and delivered to customer' })
+    const updated = await deliverJobById(req.params.id, 'Delivered by superadmin after client and creator approvals')
+    res.json({ success: true, data: updated, message: 'Job delivered to customer' })
   } catch (err) {
     next(err)
   }
@@ -634,8 +681,8 @@ export async function celebrityApproveJob(req: AdminRequest, res: Response, next
       select: { id: true },
     })
     if (!job) throw new AppError('Job not found for this celebrity account', 404)
-    const updated = await approveJobById(job.id, 'Approved by celebrity')
-    res.json({ success: true, data: updated, message: 'Job approved successfully' })
+    const updated = await markCreatorApprovalById(job.id, CELEBRITY_REVIEW_APPROVAL_NOTE)
+    res.json({ success: true, data: updated, message: 'Review approved by celebrity. Waiting for client approval and superadmin delivery.' })
   } catch (err) {
     next(err)
   }
@@ -688,8 +735,8 @@ export async function managerApproveJob(req: ManagerRequest, res: Response, next
       select: { id: true },
     })
     if (!job) throw new AppError('Job not found for this manager account', 404)
-    const updated = await approveJobById(job.id, 'Approved by manager')
-    res.json({ success: true, data: updated, message: 'Job approved successfully' })
+    const updated = await markCreatorApprovalById(job.id, MANAGER_REVIEW_APPROVAL_NOTE)
+    res.json({ success: true, data: updated, message: 'Review approved by manager. Waiting for client approval and superadmin delivery.' })
   } catch (err) {
     next(err)
   }

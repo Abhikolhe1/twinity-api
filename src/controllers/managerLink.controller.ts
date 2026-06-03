@@ -57,8 +57,10 @@ export async function listManagers(_req: AdminRequest, res: Response, next: Next
       select: {
         ...managerSelect(),
         celebrity_links: {
-          where: { is_active: true },
           select: {
+            id: true,
+            is_active: true,
+            notes: true,
             celebrity: { select: { id: true, name: true } },
             permissions: true,
           },
