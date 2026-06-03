@@ -39,6 +39,57 @@ async function signDoc(doc: Record<string, unknown>): Promise<Record<string, unk
   return { ...doc, thumbnail_url: await s3Service.presignIfS3(doc.thumbnail_url as string | undefined) }
 }
 
+function isCelebrityProfileReadyForActivation(celebrity: any): boolean {
+  const socialLinks = celebrity.social_links && typeof celebrity.social_links === 'object'
+    ? Object.values(celebrity.social_links as Record<string, unknown>).some(Boolean)
+    : false
+  const geographicAvailability = celebrity.geographic_availability && typeof celebrity.geographic_availability === 'object'
+    ? celebrity.geographic_availability as { allowedRegions?: string[] }
+    : {}
+  const toneStylePreferences = celebrity.tone_style_preferences && typeof celebrity.tone_style_preferences === 'object'
+    ? celebrity.tone_style_preferences as { communicationStyle?: string; visualStyle?: string; endorsedTopics?: string[] }
+    : {}
+  const approvalPreferences = celebrity.approval_preferences && typeof celebrity.approval_preferences === 'object'
+    ? celebrity.approval_preferences as { templatePolicyReviewed?: boolean; slaHours?: number }
+    : {}
+  const managerSettings = celebrity.manager_settings && typeof celebrity.manager_settings === 'object'
+    ? celebrity.manager_settings as { selfManaged?: boolean; managerName?: string; managerEmail?: string; permissions?: string[] }
+    : {}
+  const contractAcceptance = celebrity.contract_acceptance && typeof celebrity.contract_acceptance === 'object'
+    ? celebrity.contract_acceptance as { accepted?: boolean; signedName?: string }
+    : {}
+
+  const managerReady = managerSettings.selfManaged !== false
+    ? true
+    : Boolean(managerSettings.managerName && managerSettings.managerEmail && managerSettings.permissions?.length)
+
+  return Boolean(
+    celebrity.name?.trim() &&
+    celebrity.name_ar?.trim() &&
+    celebrity.legal_name?.trim() &&
+    celebrity.industry?.trim() &&
+    celebrity.nationality?.trim() &&
+    celebrity.nationality_ar?.trim() &&
+    celebrity.bio?.trim() &&
+    celebrity.thumbnail_url?.trim() &&
+    Array.isArray(celebrity.languages) && celebrity.languages.length > 0 &&
+    socialLinks &&
+    Array.isArray(celebrity.allowed_content_categories) && celebrity.allowed_content_categories.length > 0 &&
+    Array.isArray(celebrity.prohibited_industries) && celebrity.prohibited_industries.length > 0 &&
+    Array.isArray(celebrity.competitor_brands) && celebrity.competitor_brands.length > 0 &&
+    Array.isArray(geographicAvailability.allowedRegions) && geographicAvailability.allowedRegions.length > 0 &&
+    toneStylePreferences.communicationStyle?.trim() &&
+    toneStylePreferences.visualStyle?.trim() &&
+    Array.isArray(toneStylePreferences.endorsedTopics) && toneStylePreferences.endorsedTopics.length > 0 &&
+    Number(approvalPreferences.slaHours) > 0 &&
+    approvalPreferences.templatePolicyReviewed &&
+    managerReady &&
+    Array.isArray(celebrity.approved_media_urls) && celebrity.approved_media_urls.length > 0 &&
+    contractAcceptance.accepted &&
+    contractAcceptance.signedName?.trim()
+  )
+}
+
 export async function listCelebrities(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { industry, search, featured } = req.query
@@ -197,6 +248,9 @@ export async function toggleCelebrityStatus(req: Request, res: Response, next: N
   try {
     const existing = await prisma.celebrity.findUnique({ where: { id: req.params.id } })
     if (!existing) throw new AppError('Celebrity not found', 404)
+    if (!existing.is_active && !isCelebrityProfileReadyForActivation(existing)) {
+      throw new AppError('Celebrity profile is not completed yet. Complete and review the profile before activating.', 400)
+    }
     const celeb = await prisma.celebrity.update({
       where: { id: req.params.id },
       data: { is_active: !existing.is_active },

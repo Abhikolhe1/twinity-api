@@ -11,6 +11,7 @@ export interface AdminRequest extends Request {
   adminRole?: AdminRole
   adminPermissions?: string[]
   celebrityId?: string | null
+  celebrityActive?: boolean
 }
 
 export async function requireAdmin(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
@@ -32,7 +33,7 @@ export async function requireAdmin(req: AdminRequest, res: Response, next: NextF
         role: true,
         role_id: true,
         celebrity_id: true,
-        celebrity: { select: { onboarding_status: true } },
+        celebrity: { select: { onboarding_status: true, is_active: true } },
       },
     })
     if (!admin || !admin.is_active) {
@@ -47,6 +48,7 @@ export async function requireAdmin(req: AdminRequest, res: Response, next: NextF
     req.adminId = decoded.adminId
     req.adminRole = (decoded.role as string).replace('_', '-') as AdminRole
     req.celebrityId = admin.celebrity_id
+    req.celebrityActive = admin.celebrity?.is_active
 
     if (admin.role === 'super_admin') {
       req.adminPermissions = [...ALL_PERMISSIONS]
@@ -79,6 +81,10 @@ export function requireRole(...roles: AdminRole[]) {
 export function requirePermission(permission: string) {
   return (req: AdminRequest, res: Response, next: NextFunction): void => {
     if (req.adminRole === 'super-admin') { next(); return }
+    if (permission === 'celebrity.orders.view' && req.celebrityId && req.celebrityActive !== true) {
+      res.status(403).json({ success: false, message: 'Celebrity profile is still under review. Orders unlock after activation.' })
+      return
+    }
     if (!req.adminPermissions?.includes(permission)) {
       res.status(403).json({ success: false, message: `Permission denied: ${permission}` })
       return

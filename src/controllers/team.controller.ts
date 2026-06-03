@@ -141,6 +141,8 @@ export async function getMe(req: AdminRequest, res: Response, next: NextFunction
             id: true,
             name: true,
             onboarding_status: true,
+            is_active: true,
+            review_notes: true,
             thumbnail_url: true,
           },
         },
