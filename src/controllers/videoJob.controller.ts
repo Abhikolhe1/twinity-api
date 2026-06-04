@@ -235,6 +235,7 @@ export async function validateSubmissionRequest(req: AuthRequest, res: Response,
 export async function createJob(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { celebrityId, productType, purpose, templateId, script, tone, duration, aspectRatio, resolution, channels,
+            territory, exclusivity, estimatedPrice, briefObjective, briefAudience,
             propImages, sceneNotes, backgroundImageUrl,
             voiceModel, voiceSpeed, voiceChangeEnabled, voiceChangeSourceUrl,
             voiceAudioUrl, audioDuration, resumeReferenceId } = req.body
@@ -252,7 +253,12 @@ export async function createJob(req: AuthRequest, res: Response, next: NextFunct
         script,
         channels,
         duration,
+        territory,
+        exclusivity,
+        estimatedPrice,
         aspectRatio,
+        briefObjective,
+        briefAudience,
         resumeReferenceId,
       },
       await getSubmissionUserContext(req.userId),

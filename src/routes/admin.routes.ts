@@ -3,6 +3,7 @@ import multer from 'multer'
 import {
   adminListCelebrities,
   getDashboardStats,
+  getReportingDashboard,
   getUserAuditLogs,
   getUserDetail,
   listAuditLogs,
@@ -18,6 +19,7 @@ import {
   createCelebrityPortalAccess,
   getCelebrityProfileByAdmin,
   getMyCelebrityProfile,
+  listAvailableManagersForProfile,
   listCelebrityApplications,
   rejectCelebrityApplication,
   requestCelebrityProfileChanges,
@@ -53,6 +55,7 @@ router.post('/forgot-password', portalForgotPassword)
 router.post('/reset-password/:token', portalResetPassword)
 router.get('/me', requireAdmin, getMe)
 router.get('/dashboard', requireAdmin, requirePermission('dashboard.view'), getDashboardStats)
+router.get('/reporting', requireAdmin, requirePermission('dashboard.view'), getReportingDashboard)
 router.get('/users', requireAdmin, requirePermission('users.view'), listUsers)
 router.get('/users/:id', requireAdmin, requirePermission('users.view'), getUserDetail)
 router.patch('/users/:id/status', requireAdmin, requirePermission('users.manage'), updateUserStatus)
@@ -68,6 +71,7 @@ router.get('/celebrity-applications', requireAdmin, requirePermission('celebrity
 router.post('/celebrity-applications/:id/approve', requireAdmin, requireRole('super-admin'), requirePermission('celebrity_applications.manage'), approveCelebrityApplication)
 router.post('/celebrity-applications/:id/reject', requireAdmin, requireRole('super-admin'), requirePermission('celebrity_applications.manage'), rejectCelebrityApplication)
 router.get('/celebrity/profile', requireAdmin, requirePermission('celebrity.profile.view'), getMyCelebrityProfile)
+router.get('/celebrity/profile/managers', requireAdmin, requirePermission('celebrity.profile.view'), listAvailableManagersForProfile)
 router.put('/celebrity/profile', requireAdmin, requirePermission('celebrity.profile.update'), updateMyCelebrityProfile)
 router.post('/celebrity/profile/submit', requireAdmin, requirePermission('celebrity.profile.update'), submitMyCelebrityProfileForReview)
 router.get('/settings', requireAdmin, requirePermission('settings.view'), getSettings)

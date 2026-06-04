@@ -1,11 +1,15 @@
+import sharp from 'sharp'
 import bcrypt from 'bcryptjs'
 import { NextFunction, Request, Response } from 'express'
 import prisma from '../lib/prisma'
+import { logger } from '../config/logger'
 import { AdminRequest } from '../middleware/adminAuth'
 import { AppError } from '../middleware/errorHandler'
 import { emailService } from '../services/email.service'
+import { otpService } from '../services/otp.service'
 import { createOrRefreshManagerAccount, ensureManagerLink } from '../services/managerAccess.service'
 import { s3Service } from '../services/s3.service'
+import { settingsService } from '../services/settings.service'
 
 const CELEBRITY_PORTAL_ROLE = 'celebrity_portal'
 const CELEBRITY_PORTAL_PERMISSIONS = [
@@ -357,6 +361,71 @@ function isDigitsOnlyPhone(value: string): boolean {
   return /^\d+$/.test(value)
 }
 
+function stripSignedS3Url(url?: string | null): string | undefined {
+  if (!url) return undefined
+  if (url.includes('amazonaws.com/') && url.includes('?')) {
+    return url.split('?')[0]
+  }
+  return url
+}
+
+function getExtensionFromMime(mimeType: string): string {
+  const normalized = mimeType.toLowerCase()
+  if (normalized === 'image/jpeg' || normalized === 'image/jpg') return 'jpg'
+  if (normalized === 'image/png') return 'png'
+  if (normalized === 'image/webp') return 'webp'
+  if (normalized === 'video/mp4') return 'mp4'
+  if (normalized === 'video/quicktime') return 'mov'
+  if (normalized === 'video/webm') return 'webm'
+  if (normalized === 'audio/mpeg') return 'mp3'
+  if (normalized === 'audio/wav' || normalized === 'audio/x-wav') return 'wav'
+  if (normalized === 'audio/mp4') return 'm4a'
+  if (normalized === 'audio/x-m4a') return 'm4a'
+  const suffix = normalized.split('/')[1] || 'bin'
+  return suffix.replace(/[^a-z0-9]/g, '') || 'bin'
+}
+
+async function resolveThumbnailUpload(thumbnailUrl: string | undefined, slug: string): Promise<string | undefined> {
+  const normalized = stripSignedS3Url(thumbnailUrl)
+  if (!normalized) return normalized
+  if (!normalized.startsWith('data:')) return normalized
+
+  const match = normalized.match(/^data:([^;]+);base64,(.+)$/)
+  if (!match) return normalized
+
+  const rawBuffer = Buffer.from(match[2], 'base64')
+  const jpegBuffer = await sharp(rawBuffer).jpeg({ quality: 90 }).toBuffer()
+
+  const { s3Bucket } = await settingsService.get()
+  const key = `celebrities/${slug}/thumbnail.jpg`
+  const result = await s3Service.upload(s3Bucket, key, jpegBuffer, 'image/jpeg')
+  logger.info(`[Celebrity Onboarding] Thumbnail uploaded to S3: ${result.url}`)
+  return result.url
+}
+
+async function resolveApprovedMediaUploads(urls: string[], slug: string): Promise<string[]> {
+  const { s3Bucket } = await settingsService.get()
+  const timestamp = Date.now()
+
+  return Promise.all(
+    urls.map(async (url, index) => {
+      const normalized = stripSignedS3Url(url) || ''
+      if (!normalized.startsWith('data:')) return normalized
+
+      const match = normalized.match(/^data:([^;]+);base64,(.+)$/)
+      if (!match) return normalized
+
+      const mimeType = match[1]
+      const buffer = Buffer.from(match[2], 'base64')
+      const ext = getExtensionFromMime(mimeType)
+      const key = `celebrities/${slug}/approved-media/${timestamp}-${index + 1}.${ext}`
+      const result = await s3Service.upload(s3Bucket, key, buffer, mimeType)
+      logger.info(`[Celebrity Onboarding] Approved media uploaded to S3: ${result.url}`)
+      return result.url
+    }),
+  )
+}
+
 async function getCelebrityProfileBundle(celebrityId: string) {
   const [celebrity, templates] = await Promise.all([
     prisma.celebrity.findUnique({ where: { id: celebrityId } }),
@@ -374,11 +443,37 @@ async function getCelebrityProfileBundle(celebrityId: string) {
   }
 }
 
+export async function listAvailableManagersForProfile(_req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const managers = await prisma.manager.findMany({
+      where: { is_active: true },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        agency_name: true,
+      },
+    })
+
+    res.json({ success: true, data: managers })
+  } catch (err) {
+    next(err)
+  }
+}
+
 async function applyCelebrityProfileUpdate(
   celebrityId: string,
   body: Record<string, unknown>,
   actorAdminId?: string,
 ) {
+  const existingCelebrity = await prisma.celebrity.findUnique({
+    where: { id: celebrityId },
+    select: { slug: true },
+  })
+  if (!existingCelebrity) throw new AppError('Celebrity profile not found', 404)
+
   const requiredLabels: Array<[keyof typeof body, string]> = [
     ['name', 'Full name'],
     ['name_ar', 'Arabic name'],
@@ -490,7 +585,12 @@ async function applyCelebrityProfileUpdate(
   for (const field of optionalStringFields) {
     if (field in body) {
       const value = body[field]
-      updateData[field] = typeof value === 'string' ? value.trim() || null : value
+      const normalized = typeof value === 'string' ? value.trim() : value
+      updateData[field] = field === 'thumbnail_url'
+        ? await resolveThumbnailUpload(typeof normalized === 'string' ? normalized || undefined : undefined, existingCelebrity.slug)
+        : typeof normalized === 'string'
+          ? normalized || null
+          : normalized
     }
   }
 
@@ -507,7 +607,9 @@ async function applyCelebrityProfileUpdate(
   if ('approval_preferences' in body) updateData.approval_preferences = normalizeApprovalPreferences(body.approval_preferences)
   if ('preapproved_template_ids' in body) updateData.preapproved_template_ids = normalizeList(body.preapproved_template_ids)
   if ('manager_settings' in body) updateData.manager_settings = normalizeManagerSettings(body.manager_settings)
-  if ('approved_media_urls' in body) updateData.approved_media_urls = normalizeList(body.approved_media_urls)
+  if ('approved_media_urls' in body) {
+    updateData.approved_media_urls = await resolveApprovedMediaUploads(normalizeList(body.approved_media_urls), existingCelebrity.slug)
+  }
   if ('contract_acceptance' in body) updateData.contract_acceptance = normalizeContractAcceptance(body.contract_acceptance)
   if ('price_range' in body) updateData.price_range = body.price_range
 
@@ -549,14 +651,26 @@ async function applyCelebrityProfileUpdate(
 
 export async function submitCelebrityOnboarding(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { name, email, phone, region, nationality, industry, languages, bio } = req.body as Record<string, unknown>
+    const { name, email, phone, region, nationality, industry, languages, bio, otpCode } = req.body as Record<string, unknown>
 
     if (!String(name || '').trim()) throw new AppError('Name is required', 400)
     if (!String(email || '').trim()) throw new AppError('Email is required', 400)
     if (!String(nationality || '').trim()) throw new AppError('Nationality is required', 400)
     if (!String(industry || '').trim()) throw new AppError('Industry is required', 400)
+    if (!String(otpCode || '').trim()) throw new AppError('Email verification code is required', 400)
 
     const normalizedEmail = String(email).trim().toLowerCase()
+    if (!isValidEmail(normalizedEmail)) throw new AppError('Enter a valid email address', 400)
+    const normalizedPhone = String(phone || '').trim()
+    if (normalizedPhone && !isDigitsOnlyPhone(normalizedPhone)) {
+      throw new AppError('Phone number must contain digits only', 400)
+    }
+
+    const otpValid = await otpService.verify(normalizedEmail, String(otpCode).trim(), 'email_verification')
+    if (!otpValid) {
+      throw new AppError('Invalid or expired verification code', 400)
+    }
+
     const existing = await prisma.celebrity.findFirst({
       where: { contact_email: normalizedEmail },
       select: { id: true },
@@ -577,7 +691,7 @@ export async function submitCelebrityOnboarding(req: Request, res: Response, nex
         nationality_ar: String(nationality).trim(),
         region: String(region || '').trim() || undefined,
         contact_email: normalizedEmail,
-        contact_phone: String(phone || '').trim() || undefined,
+        contact_phone: normalizedPhone || undefined,
         languages: normalizeList(languages),
         tags: [],
         tags_ar: [],

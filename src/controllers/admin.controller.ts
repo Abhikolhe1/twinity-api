@@ -429,6 +429,211 @@ export async function updateUserStatus(req: AdminRequest, res: Response, next: N
   }
 }
 
+function normalizeQueryDateInput(value: unknown): string | undefined {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value) && typeof value[0] === 'string') return value[0]
+  return undefined
+}
+
+function parseDateRange(inputFrom?: unknown, inputTo?: unknown) {
+  const fromRaw = normalizeQueryDateInput(inputFrom)
+  const toRaw = normalizeQueryDateInput(inputTo)
+  const from = fromRaw ? new Date(fromRaw) : undefined
+  const to = toRaw ? new Date(toRaw) : undefined
+
+  return {
+    from: from && !Number.isNaN(from.getTime()) ? from : undefined,
+    to: to && !Number.isNaN(to.getTime()) ? to : undefined,
+  }
+}
+
+function isCreatorApproved(statusHistory: unknown): boolean {
+  if (!Array.isArray(statusHistory)) return false
+  return statusHistory.some((entry) => {
+    const note = String((entry as { note?: unknown })?.note || '')
+    return note === 'Approved by celebrity for final delivery'
+      || note === 'Approved by manager for final delivery'
+  })
+}
+
+export async function getReportingDashboard(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { from, to } = parseDateRange(req.query.from, req.query.to)
+    const createdAtFilter = {
+      ...(from ? { gte: from } : {}),
+      ...(to ? { lte: to } : {}),
+    }
+    const hasCreatedAtFilter = Boolean(from || to)
+
+    const videoWhere = hasCreatedAtFilter ? { created_at: createdAtFilter } : undefined
+    const refundWhere = hasCreatedAtFilter ? { requested_at: createdAtFilter } : undefined
+    const revisionWhere = hasCreatedAtFilter ? { created_at: createdAtFilter } : undefined
+    const userWhere = hasCreatedAtFilter ? { created_at: createdAtFilter } : undefined
+    const leadWhere = hasCreatedAtFilter ? { created_at: createdAtFilter } : undefined
+
+    const [
+      totalUsers,
+      activeCelebrities,
+      blockedUsers,
+      jobs,
+      leads,
+      refunds,
+      revisions,
+    ] = await Promise.all([
+      prisma.user.count({ where: userWhere }),
+      prisma.celebrity.count({ where: { ...(hasCreatedAtFilter ? { created_at: createdAtFilter } : {}), is_active: true } }),
+      prisma.user.count({ where: { ...(hasCreatedAtFilter ? { created_at: createdAtFilter } : {}), status: 'blocked' } }),
+      prisma.videoJob.findMany({
+        where: videoWhere,
+        select: {
+          id: true,
+          product_type: true,
+          status: true,
+          approval_path: true,
+          estimated_price: true,
+          currency: true,
+          is_escalated_to_support: true,
+          client_preview_approved_at: true,
+          business_verification_required: true,
+          validation_result: true,
+          status_history: true,
+        },
+      }),
+      prisma.lead.findMany({
+        where: leadWhere,
+        select: {
+          id: true,
+          status: true,
+          product_type: true,
+          estimated_value: true,
+        },
+      }),
+      prisma.refundRequest.findMany({
+        where: refundWhere,
+        select: {
+          id: true,
+          status: true,
+          requested_amount: true,
+          approved_amount: true,
+        },
+      }),
+      prisma.previewRevision.findMany({
+        where: revisionWhere,
+        select: {
+          id: true,
+          status: true,
+          type: true,
+          classification: true,
+        },
+      }),
+    ])
+
+    const executive = {
+      totalUsers,
+      activeCelebrities,
+      totalRequests: jobs.length,
+      deliveredRequests: jobs.filter((job) => job.status === 'delivered').length,
+      failedRequests: jobs.filter((job) => job.status === 'failed').length,
+      reviewRequests: jobs.filter((job) => job.status === 'review').length,
+      pendingRequests: jobs.filter((job) => job.status === 'pending' || job.status === 'in_progress').length,
+      totalLeadRevenue: leads
+        .filter((lead) => lead.status === 'paid')
+        .reduce((sum, lead) => sum + Number(lead.estimated_value || 0), 0),
+      requestRevenue: jobs.reduce((sum, job) => sum + Number(job.estimated_price || 0), 0),
+    }
+
+    const serviceTypeMap = new Map<string, {
+      total: number
+      delivered: number
+      review: number
+      failed: number
+      revenue: number
+    }>()
+
+    for (const job of jobs) {
+      const key = job.product_type
+      const current = serviceTypeMap.get(key) ?? { total: 0, delivered: 0, review: 0, failed: 0, revenue: 0 }
+      current.total += 1
+      current.revenue += Number(job.estimated_price || 0)
+      if (job.status === 'delivered') current.delivered += 1
+      if (job.status === 'review') current.review += 1
+      if (job.status === 'failed') current.failed += 1
+      serviceTypeMap.set(key, current)
+    }
+
+    const approval = jobs.reduce((acc, job) => {
+      if (job.status !== 'review') return acc
+      const creatorApproved = isCreatorApproved(job.status_history)
+      const clientApproved = Boolean(job.client_preview_approved_at)
+
+      acc.totalReview += 1
+      if (!creatorApproved) acc.waitingCreator += 1
+      else if (!clientApproved) acc.waitingClient += 1
+      else acc.readyForDelivery += 1
+      return acc
+    }, {
+      totalReview: 0,
+      waitingCreator: 0,
+      waitingClient: 0,
+      readyForDelivery: 0,
+    })
+
+    const revision = {
+      total: revisions.length,
+      pending: revisions.filter((item) => item.status === 'pending').length,
+      approved: revisions.filter((item) => item.status === 'approved').length,
+      rejected: revisions.filter((item) => item.status === 'rejected').length,
+      escalated: revisions.filter((item) => item.status === 'escalated' || item.type === 'escalation').length,
+      material: revisions.filter((item) => item.classification === 'material' || item.type === 'material').length,
+      minor: revisions.filter((item) => item.classification === 'minor' || item.type === 'minor').length,
+    }
+
+    const payment = {
+      totalRefundRequests: refunds.length,
+      requested: refunds.filter((item) => item.status === 'requested').length,
+      approved: refunds.filter((item) => item.status === 'approved').length,
+      rejected: refunds.filter((item) => item.status === 'rejected').length,
+      processed: refunds.filter((item) => item.status === 'processed').length,
+      partial: refunds.filter((item) => item.status === 'partial').length,
+      requestedAmount: refunds.reduce((sum, item) => sum + Number(item.requested_amount || 0), 0),
+      approvedAmount: refunds.reduce((sum, item) => sum + Number(item.approved_amount || 0), 0),
+    }
+
+    const compliance = {
+      fullReviewRouted: jobs.filter((job) => job.approval_path === 'full_review').length,
+      supportEscalations: jobs.filter((job) => job.is_escalated_to_support).length,
+      businessVerificationRequired: jobs.filter((job) => job.business_verification_required).length,
+      blockedUsers,
+      failedRequests: jobs.filter((job) => job.status === 'failed').length,
+      validationIssues: jobs.filter((job) => {
+        const errors = (job.validation_result as { errors?: unknown[] } | null)?.errors
+        return Array.isArray(errors) && errors.length > 0
+      }).length,
+    }
+
+    res.json({
+      success: true,
+      data: {
+        range: {
+          from: from?.toISOString() ?? null,
+          to: to?.toISOString() ?? null,
+        },
+        executive,
+        serviceTypes: Array.from(serviceTypeMap.entries()).map(([productType, value]) => ({
+          productType,
+          ...value,
+        })),
+        approval,
+        revision,
+        payment,
+        compliance,
+      },
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
 export async function getUserDetail(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const user = await prisma.user.findUnique({

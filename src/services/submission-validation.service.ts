@@ -13,6 +13,12 @@ type SubmissionUserContext = {
   company?: string | null
 }
 
+type GeographicAvailability = {
+  mode?: string
+  allowedRegions?: string[]
+  restrictedRegions?: string[]
+}
+
 export type SubmissionValidationPayload = {
   celebrityId?: string
   productType?: string
@@ -92,6 +98,83 @@ function findBlockedWords(script: string, blockedWords: string[]): string[] {
   })
 }
 
+function normalizeText(value: string): string {
+  const normalized = value.toLowerCase().replace(/\s+/g, ' ').trim()
+  switch (normalized) {
+    case 'saudi arabian':
+    case 'ksa':
+    case 'kingdom of saudi arabia':
+      return 'saudi arabia'
+    case 'mena region':
+      return 'mena'
+    case 'global worldwide':
+    case 'worldwide':
+      return 'global'
+    default:
+      return normalized
+  }
+}
+
+function territoryLevel(value: string): number | null {
+  switch (normalizeText(value)) {
+    case 'saudi arabia':
+      return 1
+    case 'gcc':
+      return 2
+    case 'mena':
+      return 3
+    case 'global':
+      return 4
+    default:
+      return null
+  }
+}
+
+function territoryFallsWithin(rule: string, selected: string): boolean {
+  const ruleLevel = territoryLevel(rule)
+  const selectedLevel = territoryLevel(selected)
+
+  if (ruleLevel !== null && selectedLevel !== null) {
+    return ruleLevel >= selectedLevel
+  }
+
+  return normalizeText(rule) === normalizeText(selected)
+}
+
+function territoryAllowedByRule(rule: string, selected: string): boolean {
+  const ruleLevel = territoryLevel(rule)
+  const selectedLevel = territoryLevel(selected)
+
+  if (ruleLevel !== null && selectedLevel !== null) {
+    return ruleLevel >= selectedLevel
+  }
+
+  return normalizeText(rule) === normalizeText(selected)
+}
+
+function parseGeographicAvailability(input: unknown): GeographicAvailability {
+  if (!input || typeof input !== 'object') return {}
+  const value = input as Record<string, unknown>
+  return {
+    mode: typeof value.mode === 'string' ? value.mode : undefined,
+    allowedRegions: Array.isArray(value.allowedRegions) ? value.allowedRegions.map((item) => String(item).trim()).filter(Boolean) : [],
+    restrictedRegions: Array.isArray(value.restrictedRegions) ? value.restrictedRegions.map((item) => String(item).trim()).filter(Boolean) : [],
+  }
+}
+
+function findMentionedTerm(text: string, terms: string[]): string | null {
+  const normalizedText = normalizeText(text)
+  for (const term of terms) {
+    const normalizedTerm = normalizeText(term)
+    if (!normalizedTerm) continue
+    const escaped = normalizedTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    if (new RegExp(`\\b${escaped}\\b`, 'i').test(normalizedText)) {
+      return term
+    }
+  }
+  return null
+}
+
 export async function validateSubmission(
   payload: SubmissionValidationPayload,
   userContext?: SubmissionUserContext,
@@ -155,6 +238,54 @@ export async function validateSubmission(
       code: 'blocked_content',
       message: `Your request contains restricted content: ${foundBlockedWords.join(', ')}.`,
     })
+  }
+
+  if (productType === 'video-ad' && celebrity) {
+    const geo = parseGeographicAvailability(celebrity.geographic_availability)
+    if (territory) {
+      const matchedRestrictedRegion = (geo.restrictedRegions ?? []).find((region) => territoryFallsWithin(region, territory))
+      if (matchedRestrictedRegion) {
+        errors.push({
+          field: 'territory',
+          code: 'restricted_region',
+          message: `${celebrity.name} is restricted for ${matchedRestrictedRegion}. Please choose another territory or a different celebrity.`,
+        })
+      } else if ((geo.allowedRegions ?? []).length > 0) {
+        const territoryAllowed = geo.allowedRegions!.some((region) => territoryAllowedByRule(region, territory))
+        if (!territoryAllowed) {
+          errors.push({
+            field: 'territory',
+            code: 'outside_allowed_region',
+            message: `${celebrity.name} is not approved for ${territory}. Allowed regions: ${geo.allowedRegions!.join(', ')}.`,
+          })
+        }
+      }
+    }
+
+    const campaignNarrative = [
+      purpose,
+      script,
+      String(payload.briefObjective || '').trim(),
+      String(payload.briefAudience || '').trim(),
+    ].filter(Boolean).join(' ')
+
+    const blockedIndustry = findMentionedTerm(campaignNarrative, celebrity.prohibited_industries ?? [])
+    if (blockedIndustry) {
+      errors.push({
+        field: 'briefObjective',
+        code: 'restricted_industry',
+        message: `${celebrity.name} cannot be used for ${blockedIndustry} campaigns.`,
+      })
+    }
+
+    const blockedCompetitor = findMentionedTerm(campaignNarrative, celebrity.competitor_brands ?? [])
+    if (blockedCompetitor) {
+      errors.push({
+        field: 'briefObjective',
+        code: 'competitor_conflict',
+        message: `${celebrity.name} has a competitor restriction for ${blockedCompetitor}. Please revise the campaign brief or choose another celebrity.`,
+      })
+    }
   }
 
   const businessVerificationRequired = productType !== 'greeting'
