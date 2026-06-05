@@ -28,7 +28,7 @@ const POLL_INTERVAL_MS  = 30_000
 
 export interface SeedanceSubmitResult {
   requestId: string
-  status:    'submitted' | 'stub'
+  status:    'submitted'
 }
 
 interface FalStatusResponse {
@@ -52,8 +52,7 @@ export async function submitSeedanceVideo(params: {
   const { falApiKey } = await settingsService.get()
 
   if (!falApiKey) {
-    logger.warn('[FalVideo] fal.ai key not set — returning stub')
-    return { requestId: `stub-seedance-${Date.now()}`, status: 'stub' }
+    throw new Error('fal.ai API key is not configured in admin settings')
   }
 
   if (!params.imageUrl) throw new Error('Seedance: imageUrl is empty — upload a celebrity photo in the admin panel')

@@ -6,7 +6,7 @@
  *   1. generateVoice()   — ElevenLabs TTS using celebrity's cloned voiceModelId → MP3
  *   2. creatifyAurora()  — Creatify Aurora: celebrity image + MP3 → lip-synced video (async)
  *
- * All methods fall back to stubs when credentials are not configured.
+ * Provider calls should fail clearly when required credentials are not configured.
  */
 import FormDataLib from 'form-data'
 import { logger } from '../config/logger'
@@ -78,7 +78,7 @@ async function generateVoicePreview(voiceId: string, language: string, apiKey: s
 // ─── Creatify API ─────────────────────────────────────────────────────────────
 const CREATIFY_BASE = 'https://api.creatify.ai'
 
-export interface CreatifyResult { jobId: string; status: 'submitted' | 'stub' }
+export interface CreatifyResult { jobId: string; status: 'submitted' }
 
 // ─── OpenAI API ───────────────────────────────────────────────────────────────
 const OPENAI_BASE = 'https://api.openai.com'
@@ -125,8 +125,7 @@ export const aiService = {
     const { elevenLabsKey } = await settingsService.get()
 
     if (!elevenLabsKey) {
-      logger.warn('[AI] ElevenLabs key not set — returning stub')
-      return { jobId: `stub-voice-${Date.now()}`, audioUrl: 'https://stub-audio.mp3', durationSecs: 30 }
+      throw new Error('ElevenLabs API key is not configured in admin settings')
     }
 
     // Request raw PCM so we can pad silence in pure Node.js (no ffmpeg needed)
@@ -218,8 +217,7 @@ export const aiService = {
     const { elevenLabsKey } = await settingsService.get()
 
     if (!elevenLabsKey) {
-      logger.warn('[AI] ElevenLabs key not set — returning stub voice ID')
-      return { voiceId: params.existingVoiceId ?? `stub-voice-${Date.now()}` }
+      throw new Error('ElevenLabs API key is not configured in admin settings')
     }
 
     // Use form-data package — Node.js native FormData + Blob does not
@@ -331,10 +329,8 @@ export const aiService = {
     backgroundImageUrl?: string
   }): Promise<CreatifyResult> {
     const { creatifyApiId, creatifyApiKey } = await settingsService.get()
-
     if (!creatifyApiId || !creatifyApiKey) {
-      logger.warn('[AI] Creatify API ID / key not set — returning stub')
-      return { jobId: `stub-creatify-${Date.now()}`, status: 'stub' }
+      throw new Error('Creatify API credentials are not configured in admin settings')
     }
 
     if (!params.imageUrl) throw new Error('Creatify Aurora: imageUrl is empty — upload a photo for this celebrity in the admin panel')
@@ -644,8 +640,7 @@ export const aiService = {
     const { elevenLabsKey } = await settingsService.get()
 
     if (!elevenLabsKey) {
-      logger.warn('[AI] ElevenLabs key not set — returning stub for changeVoice')
-      return { jobId: `stub-sts-${Date.now()}`, audioUrl: 'https://stub-audio.mp3' }
+      throw new Error('ElevenLabs API key is not configured in admin settings')
     }
 
     const form = new FormDataLib()
@@ -685,3 +680,4 @@ export const aiService = {
     return { jobId, audioUrl }
   },
 }
+

@@ -144,15 +144,14 @@ function buildOverlayFilter(opacity: number, position: string): string {
   else if (position === 'Center')       y = `(main_h-overlay_h)/2`
   else                                  y = `main_h-overlay_h-${pad}`
 
-  // Scale the watermark to at most 25% of video width, preserve aspect ratio
-  // Then apply opacity via colorchannelmixer (alpha channel scale)
+  // Scale the watermark relative to the base video using scale2ref so ffmpeg
+  // has access to the main video dimensions inside the filter graph.
+  // Then apply opacity via colorchannelmixer (alpha channel scale).
   const alphaVal = opacity.toFixed(4)
   return [
-    `[1:v]scale=iw*min(W*0.25/iw\\,1):ih*min(W*0.25/iw\\,1),`,
-    `format=rgba,`,
-    `colorchannelmixer=aa=${alphaVal}`,
-    `[wm];`,
-    `[0:v][wm]overlay=${x}:${y}`,
+    `[1:v][0:v]scale2ref=w='min(iw,main_w*0.25)':h='ow/mdar'[wm][base];`,
+    `[wm]format=rgba,colorchannelmixer=aa=${alphaVal}[wmf];`,
+    `[base][wmf]overlay=${x}:${y}`,
   ].join('')
 }
 
@@ -167,7 +166,7 @@ async function applyWatermark(videoUrl: string, referenceId: string): Promise<Wa
   const settings       = await settingsService.get()
   const opacity        = Math.min(1, Math.max(0, parseFloat(settings.watermarkOpacity || '0.70')))
   const position       = settings.watermarkPosition || 'Bottom Center'
-  const watermarkImage = settings.watermarkImageUrl || ''
+  const watermarkImage = (await s3Service.presignIfS3(settings.watermarkImageUrl)) || settings.watermarkImageUrl || ''
 
   logger.info(`[Watermark] Starting: job=${referenceId}, mode=${watermarkImage ? 'image' : 'text'}, position=${position}, opacity=${opacity}`)
 

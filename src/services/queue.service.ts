@@ -5,7 +5,7 @@
  *   greeting  → Creatify Aurora (celebrity image + voice audio → lip-synced video)
  *   video_ad  → fal.ai Seedance 2.0 (celebrity image + prompt → animated ad video)
  *
- * Stub mode: both providers stub gracefully when credentials are absent.
+ * Provider credential or upstream failures should move jobs into a real failed state.
  */
 import { Prisma } from '@prisma/client'
 import { logger } from '../config/logger'
@@ -26,6 +26,8 @@ async function appendHistory(jobId: string, entry: { status: string; timestamp: 
 
 async function processGreetingJob(jobId: string, job: Awaited<ReturnType<typeof loadJob>>): Promise<void> {
   if (!job) return
+  const ensuredJob = job
+  const jobReferenceId = ensuredJob.reference_id
   const celeb = job.celebrity
 
   try {
@@ -48,25 +50,8 @@ async function processGreetingJob(jobId: string, job: Awaited<ReturnType<typeof 
       creatifyPrompt:     job.scene_notes || undefined,
       backgroundImageUrl,
     })
-
-    if (render.status === 'stub') {
-      const reviewHistory = await appendHistory(jobId, { status: 'review', timestamp: new Date().toISOString(), note: 'Stub render — ready for CS review' })
-      await prisma.videoJob.update({
-        where: { id: jobId },
-        data: {
-          creatify_job_id: render.jobId,
-          preview_url:     voiceAudioUrl,
-          watermarked_url: voiceAudioUrl,
-          final_video_url: voiceAudioUrl,
-          status:          'review',
-          status_history:  reviewHistory,
-        },
-      })
-      logger.info(`[Queue] Job ${job.reference_id} → review (stub)`)
-    } else {
-      await prisma.videoJob.update({ where: { id: jobId }, data: { creatify_job_id: render.jobId } })
-      logger.info(`[Queue] Job ${job.reference_id} Creatify queued → awaiting webhook (id: ${render.jobId})`)
-    }
+    await prisma.videoJob.update({ where: { id: jobId }, data: { creatify_job_id: render.jobId } })
+    logger.info(`[Queue] Job ${jobReferenceId} Creatify queued - awaiting webhook (id: ${render.jobId})`)
   } catch (err: any) {
     logger.error(`[Queue] Greeting job ${job.reference_id} failed:`, err)
     const failedHistory = await appendHistory(jobId, { status: 'failed', timestamp: new Date().toISOString(), note: err?.message ?? 'AI processing error' })
@@ -93,21 +78,8 @@ async function processVideoAdJob(jobId: string, job: Awaited<ReturnType<typeof l
 
     const result = await submitSeedanceVideo({ imageUrl, referenceId: job.reference_id, callbackUrl, videoPrompt })
 
-    if (result.status === 'stub') {
-      // Stub mode: advance directly to review with placeholder
-      const stubJobAdapter = makeJobAdapter(jobId, job.reference_id, {
-        finalVideoUrl:  imageUrl,
-        watermarkedUrl: imageUrl,
-        previewUrl:     imageUrl,
-        status:         'in-progress',
-        statusHistory:  (Array.isArray(job.status_history) ? job.status_history : []) as unknown[],
-      })
-      await applyWatermarkAndAdvanceJob(stubJobAdapter as any, imageUrl)
-      logger.info(`[Queue] Video ad ${job.reference_id} → review (stub)`)
-    } else {
-      await prisma.videoJob.update({ where: { id: jobId }, data: { creatify_job_id: result.requestId } })
-      logger.info(`[Queue] Video ad ${job.reference_id} submitted to fal.ai → awaiting webhook (id: ${result.requestId})`)
-    }
+    await prisma.videoJob.update({ where: { id: jobId }, data: { creatify_job_id: result.requestId } })
+    logger.info(`[Queue] Video ad ${job.reference_id} submitted to fal.ai → awaiting webhook (id: ${result.requestId})`)
   } catch (err: any) {
     logger.error(`[Queue] Video ad ${job.reference_id} failed:`, err)
     const failedHistory = await appendHistory(jobId, { status: 'failed', timestamp: new Date().toISOString(), note: err?.message ?? 'fal.ai Seedance error' })
@@ -186,3 +158,4 @@ export const queueService = {
     logger.info(`[Queue] Notification: ${type}`, payload)
   },
 }
+
