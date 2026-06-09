@@ -408,6 +408,26 @@ model Setting {
   @@map("settings")
 }
 
+model CelebrityLanguageMaster {
+  id         String   @id @default(uuid())
+  value      String   @unique
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([value])
+  @@map("celebrity_language_masters")
+}
+
+model CelebrityNationalityMaster {
+  id         String   @id @default(uuid())
+  value      String   @unique
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([value])
+  @@map("celebrity_nationality_masters")
+}
+
 model BlockedWord {
   id         String   @id @default(uuid())
   word       String   @unique

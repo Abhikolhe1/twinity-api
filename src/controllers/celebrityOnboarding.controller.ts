@@ -1,0 +1,1198 @@
+import sharp from 'sharp'
+import bcrypt from 'bcryptjs'
+import { NextFunction, Request, Response } from 'express'
+import prisma from '../lib/prisma'
+import { logger } from '../config/logger'
+import { AdminRequest } from '../middleware/adminAuth'
+import { AppError } from '../middleware/errorHandler'
+import { emailService } from '../services/email.service'
+import { otpService } from '../services/otp.service'
+import { createOrRefreshManagerAccount, ensureManagerLink } from '../services/managerAccess.service'
+import { s3Service } from '../services/s3.service'
+import { settingsService } from '../services/settings.service'
+
+const CELEBRITY_PORTAL_ROLE = 'celebrity_portal'
+const CELEBRITY_PORTAL_PERMISSIONS = [
+  'celebrity.profile.view',
+  'celebrity.profile.update',
+  'celebrity.orders.view',
+] as const
+
+function slugify(value: string): string {
+  return value.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+}
+
+function makeInitials(name: string): string {
+  return name
+    .split(' ')
+    .map((part) => part[0] ?? '')
+    .join('')
+    .slice(0, 3)
+    .toUpperCase() || 'CE'
+}
+
+async function createUniqueSlug(base: string): Promise<string> {
+  const seed = slugify(base) || `celebrity-${Date.now()}`
+  let slug = seed
+  let attempt = 1
+  while (await prisma.celebrity.findUnique({ where: { slug } })) {
+    attempt += 1
+    slug = `${seed}-${attempt}`
+  }
+  return slug
+}
+
+function normalizeList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean)
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map((item) => item.trim()).filter(Boolean)
+  }
+  return []
+}
+
+type SocialLinks = {
+  instagram?: string
+  tiktok?: string
+  snapchat?: string
+  x?: string
+  youtube?: string
+}
+
+type GeographicAvailability = {
+  mode: 'global' | 'gcc' | 'mena' | 'custom'
+  allowedRegions: string[]
+  restrictedRegions: string[]
+}
+
+type ToneStylePreferences = {
+  communicationStyle: string
+  visualStyle: string
+  endorsedTopics: string[]
+  personalRestrictions: string[]
+}
+
+type ApprovalPreferences = {
+  greetingAutoApprove: boolean
+  manualReviewRequired: boolean
+  slaHours: number
+  fastTrackEligible: boolean
+  templatePolicyReviewed: boolean
+  commercialLicenseNumber: string
+  commercialLicenseDocumentUrl: string
+}
+
+type ManagerSettings = {
+  selfManaged: boolean
+  agencyName: string
+  managerName: string
+  managerEmail: string
+  managerPhone: string
+  permissions: string[]
+}
+
+type ContractAcceptance = {
+  accepted: boolean
+  acceptedAt: string | null
+  signedName: string
+}
+
+function normalizeSocialLinks(value: unknown): SocialLinks {
+  const input = (value && typeof value === 'object') ? value as Record<string, unknown> : {}
+  return {
+    instagram: String(input.instagram || '').trim() || undefined,
+    tiktok: String(input.tiktok || '').trim() || undefined,
+    snapchat: String(input.snapchat || '').trim() || undefined,
+    x: String(input.x || '').trim() || undefined,
+    youtube: String(input.youtube || '').trim() || undefined,
+  }
+}
+
+function normalizeGeographicAvailability(value: unknown): GeographicAvailability {
+  const input = (value && typeof value === 'object') ? value as Record<string, unknown> : {}
+  const mode = String(input.mode || 'global').trim()
+  return {
+    mode: (['global', 'gcc', 'mena', 'custom'].includes(mode) ? mode : 'global') as GeographicAvailability['mode'],
+    allowedRegions: normalizeList(input.allowedRegions),
+    restrictedRegions: normalizeList(input.restrictedRegions),
+  }
+}
+
+function normalizeToneStylePreferences(value: unknown): ToneStylePreferences {
+  const input = (value && typeof value === 'object') ? value as Record<string, unknown> : {}
+  return {
+    communicationStyle: String(input.communicationStyle || '').trim(),
+    visualStyle: String(input.visualStyle || '').trim(),
+    endorsedTopics: normalizeList(input.endorsedTopics),
+    personalRestrictions: normalizeList(input.personalRestrictions),
+  }
+}
+
+function normalizeApprovalPreferences(value: unknown): ApprovalPreferences {
+  const input = (value && typeof value === 'object') ? value as Record<string, unknown> : {}
+  const rawSla = Number(input.slaHours)
+  return {
+    greetingAutoApprove: Boolean(input.greetingAutoApprove),
+    manualReviewRequired: input.manualReviewRequired === undefined ? true : Boolean(input.manualReviewRequired),
+    slaHours: Number.isFinite(rawSla) && rawSla > 0 ? rawSla : 48,
+    fastTrackEligible: Boolean(input.fastTrackEligible),
+    templatePolicyReviewed: Boolean(input.templatePolicyReviewed),
+    commercialLicenseNumber: String(input.commercialLicenseNumber || '').trim(),
+    commercialLicenseDocumentUrl: String(input.commercialLicenseDocumentUrl || '').trim(),
+  }
+}
+
+function normalizeManagerSettings(value: unknown): ManagerSettings {
+  const input = (value && typeof value === 'object') ? value as Record<string, unknown> : {}
+  return {
+    selfManaged: input.selfManaged === undefined ? true : Boolean(input.selfManaged),
+    agencyName: String(input.agencyName || '').trim(),
+    managerName: String(input.managerName || '').trim(),
+    managerEmail: String(input.managerEmail || '').trim().toLowerCase(),
+    managerPhone: String(input.managerPhone || '').trim(),
+    permissions: normalizeList(input.permissions),
+  }
+}
+
+function normalizeContractAcceptance(value: unknown): ContractAcceptance {
+  const input = (value && typeof value === 'object') ? value as Record<string, unknown> : {}
+  const accepted = Boolean(input.accepted)
+  const signedName = String(input.signedName || '').trim()
+  const acceptedAtRaw = String(input.acceptedAt || '').trim()
+  return {
+    accepted,
+    signedName,
+    acceptedAt: accepted ? (acceptedAtRaw || new Date().toISOString()) : null,
+  }
+}
+
+async function ensureCelebrityPortalRole(createdBy?: string): Promise<string> {
+  const existing = await prisma.role.findFirst({
+    where: { name: { equals: CELEBRITY_PORTAL_ROLE, mode: 'insensitive' } },
+  })
+  if (existing) return existing.id
+
+  const role = await prisma.role.create({
+    data: {
+      name: CELEBRITY_PORTAL_ROLE,
+      description: 'Restricted portal access for approved celebrity accounts.',
+      permissions: [...CELEBRITY_PORTAL_PERMISSIONS],
+      is_system: true,
+      created_by: createdBy,
+    },
+  })
+  return role.id
+}
+
+const CELEBRITY_TEMP_PASSWORD = 'Celebrity@1234'
+
+function generateTemporaryPassword(): string {
+  return CELEBRITY_TEMP_PASSWORD
+}
+
+export async function createOrRefreshCelebrityPortalAccess(
+  celebrity: {
+    id: string
+    name: string
+    contact_email: string | null
+  },
+  approvedByAdminId?: string,
+  options: {
+    syncCelebrityStatus?: boolean
+  } = {},
+) {
+  if (!celebrity.contact_email) throw new AppError('Application email is missing', 400)
+
+  const celebrityRecord = await prisma.celebrity.findUnique({ where: { id: celebrity.id } })
+  if (!celebrityRecord) throw new AppError('Celebrity not found', 404)
+
+  const profileReadyForActivation = isCelebrityProfileComplete(celebrityRecord)
+  const normalizedEmail = celebrity.contact_email.toLowerCase()
+  const roleId = await ensureCelebrityPortalRole(approvedByAdminId)
+  const temporaryPassword = generateTemporaryPassword()
+  const hashedPassword = await bcrypt.hash(temporaryPassword, 12)
+
+  const [existingAdminByEmail, existingAdminByCelebrity] = await Promise.all([
+    prisma.admin.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, celebrity_id: true },
+    }),
+    prisma.admin.findFirst({
+      where: { celebrity_id: celebrity.id },
+      select: { id: true, email: true },
+    }),
+  ])
+
+  if (existingAdminByEmail && existingAdminByEmail.celebrity_id && existingAdminByEmail.celebrity_id !== celebrity.id) {
+    throw new AppError('This email is already linked to another celebrity portal account', 409)
+  }
+  if (existingAdminByEmail && !existingAdminByEmail.celebrity_id) {
+    throw new AppError('This email is already used by an internal admin account', 409)
+  }
+
+  const admin = existingAdminByCelebrity
+    ? await prisma.admin.update({
+        where: { id: existingAdminByCelebrity.id },
+        data: {
+          name: celebrity.name,
+          email: normalizedEmail,
+          password: hashedPassword,
+          role: 'ops',
+          role_id: roleId,
+          celebrity_id: celebrity.id,
+          is_active: true,
+          must_change_password: true,
+          profile_completed: profileReadyForActivation,
+        },
+      })
+    : await prisma.admin.upsert({
+        where: { email: normalizedEmail },
+        update: {
+          name: celebrity.name,
+          password: hashedPassword,
+          role: 'ops',
+          role_id: roleId,
+          celebrity_id: celebrity.id,
+          is_active: true,
+          must_change_password: true,
+          profile_completed: profileReadyForActivation,
+        },
+        create: {
+          name: celebrity.name,
+          email: normalizedEmail,
+          password: hashedPassword,
+          role: 'ops',
+          role_id: roleId,
+          celebrity_id: celebrity.id,
+          is_active: true,
+          must_change_password: true,
+          profile_completed: profileReadyForActivation,
+        },
+      })
+
+  const updatedCelebrity = options.syncCelebrityStatus === false
+    ? await prisma.celebrity.findUnique({ where: { id: celebrity.id } })
+    : await prisma.celebrity.update({
+        where: { id: celebrity.id },
+        data: {
+          onboarding_status: 'approved',
+          is_active: profileReadyForActivation,
+          reviewed_at: new Date(),
+          reviewed_by_admin_id: approvedByAdminId ?? null,
+          review_notes: null,
+        },
+      })
+
+  if (!updatedCelebrity) throw new AppError('Celebrity not found after portal access creation', 404)
+
+  await emailService.sendCelebrityPortalWelcomeEmail(
+    admin.email,
+    admin.name,
+    temporaryPassword,
+  )
+
+  return {
+    admin,
+    updatedCelebrity,
+    temporaryPassword,
+  }
+}
+
+export function isCelebrityProfileComplete(celebrity: {
+  name: string
+  name_ar: string
+  legal_name: string | null
+  nationality: string
+  nationality_ar: string
+  industry: string
+  bio: string | null
+  thumbnail_url: string | null
+  languages: string[]
+  social_links: unknown
+  allowed_content_categories: string[]
+  prohibited_industries: string[]
+  competitor_brands: string[]
+  geographic_availability: unknown
+  tone_style_preferences: unknown
+  approval_preferences: unknown
+  preapproved_template_ids: string[]
+  manager_settings: unknown
+  approved_media_urls: string[]
+  contract_acceptance: unknown
+}): boolean {
+  const socialLinks = normalizeSocialLinks(celebrity.social_links)
+  const geographicAvailability = normalizeGeographicAvailability(celebrity.geographic_availability)
+  const toneStylePreferences = normalizeToneStylePreferences(celebrity.tone_style_preferences)
+  const approvalPreferences = normalizeApprovalPreferences(celebrity.approval_preferences)
+  const managerSettings = normalizeManagerSettings(celebrity.manager_settings)
+  const contractAcceptance = normalizeContractAcceptance(celebrity.contract_acceptance)
+  const hasSocialLink = Object.values(socialLinks).some(Boolean)
+  const managerSectionValid = managerSettings.selfManaged
+    ? true
+    : Boolean(managerSettings.managerName && managerSettings.managerEmail && managerSettings.permissions.length)
+
+  return Boolean(
+    celebrity.name.trim() &&
+    celebrity.name_ar.trim() &&
+    celebrity.legal_name?.trim() &&
+    celebrity.nationality.trim() &&
+    celebrity.nationality_ar.trim() &&
+    celebrity.industry.trim() &&
+    celebrity.bio?.trim() &&
+    celebrity.thumbnail_url?.trim() &&
+    celebrity.languages.length &&
+    hasSocialLink &&
+    celebrity.allowed_content_categories.length &&
+    celebrity.prohibited_industries.length &&
+    celebrity.competitor_brands.length &&
+    geographicAvailability.allowedRegions.length &&
+    toneStylePreferences.communicationStyle &&
+    toneStylePreferences.visualStyle &&
+    toneStylePreferences.endorsedTopics.length &&
+    approvalPreferences.slaHours > 0 &&
+    approvalPreferences.templatePolicyReviewed &&
+    managerSectionValid &&
+    celebrity.approved_media_urls.length &&
+    contractAcceptance.accepted &&
+    contractAcceptance.signedName
+  )
+}
+
+async function requireCelebrityScope(req: AdminRequest) {
+  const admin = await prisma.admin.findUnique({
+    where: { id: req.adminId },
+    select: { celebrity_id: true },
+  })
+  if (!admin?.celebrity_id) throw new AppError('Celebrity scope not found for this account', 403)
+  return admin.celebrity_id
+}
+
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+function isDigitsOnlyPhone(value: string): boolean {
+  return /^\d+$/.test(value)
+}
+
+function stripSignedS3Url(url?: string | null): string | undefined {
+  if (!url) return undefined
+  if (url.includes('amazonaws.com/') && url.includes('?')) {
+    return url.split('?')[0]
+  }
+  return url
+}
+
+function getExtensionFromMime(mimeType: string): string {
+  const normalized = mimeType.toLowerCase()
+  if (normalized === 'image/jpeg' || normalized === 'image/jpg') return 'jpg'
+  if (normalized === 'image/png') return 'png'
+  if (normalized === 'image/webp') return 'webp'
+  if (normalized === 'video/mp4') return 'mp4'
+  if (normalized === 'video/quicktime') return 'mov'
+  if (normalized === 'video/webm') return 'webm'
+  if (normalized === 'audio/mpeg') return 'mp3'
+  if (normalized === 'audio/wav' || normalized === 'audio/x-wav') return 'wav'
+  if (normalized === 'audio/mp4') return 'm4a'
+  if (normalized === 'audio/x-m4a') return 'm4a'
+  if (normalized === 'application/pdf') return 'pdf'
+  const suffix = normalized.split('/')[1] || 'bin'
+  return suffix.replace(/[^a-z0-9]/g, '') || 'bin'
+}
+
+async function resolveThumbnailUpload(thumbnailUrl: string | undefined, slug: string): Promise<string | undefined> {
+  const normalized = stripSignedS3Url(thumbnailUrl)
+  if (!normalized) return normalized
+  if (!normalized.startsWith('data:')) return normalized
+
+  const match = normalized.match(/^data:([^;]+);base64,(.+)$/)
+  if (!match) return normalized
+
+  const rawBuffer = Buffer.from(match[2], 'base64')
+  const jpegBuffer = await sharp(rawBuffer).jpeg({ quality: 90 }).toBuffer()
+
+  const { s3Bucket } = await settingsService.get()
+  const key = `celebrities/${slug}/thumbnail.jpg`
+  const result = await s3Service.upload(s3Bucket, key, jpegBuffer, 'image/jpeg')
+  logger.info(`[Celebrity Onboarding] Thumbnail uploaded to S3: ${result.url}`)
+  return result.url
+}
+
+async function resolveApprovedMediaUploads(urls: string[], slug: string): Promise<string[]> {
+  const { s3Bucket } = await settingsService.get()
+  const timestamp = Date.now()
+
+  return Promise.all(
+    urls.map(async (url, index) => {
+      const normalized = stripSignedS3Url(url) || ''
+      if (!normalized.startsWith('data:')) return normalized
+
+      const match = normalized.match(/^data:([^;]+);base64,(.+)$/)
+      if (!match) return normalized
+
+      const sourceMimeType = match[1]
+      const sourceBuffer = Buffer.from(match[2], 'base64')
+      const isImage = sourceMimeType.toLowerCase().startsWith('image/')
+      const buffer = isImage
+        ? await sharp(sourceBuffer).jpeg({ quality: 90 }).toBuffer()
+        : sourceBuffer
+      const mimeType = isImage ? 'image/jpeg' : sourceMimeType
+      const ext = getExtensionFromMime(mimeType)
+      const key = `celebrities/${slug}/approved-media/${timestamp}-${index + 1}.${ext}`
+      const result = await s3Service.upload(s3Bucket, key, buffer, mimeType)
+      logger.info(`[Celebrity Onboarding] Approved media uploaded to S3: ${result.url}`)
+      return result.url
+    }),
+  )
+}
+
+async function resolveCommercialLicenseUpload(documentUrl: string | undefined, slug: string): Promise<string | undefined> {
+  const normalized = stripSignedS3Url(documentUrl)
+  if (!normalized) return undefined
+  if (!normalized.startsWith('data:')) return normalized
+
+  const match = normalized.match(/^data:([^;]+);base64,(.+)$/)
+  if (!match) return normalized
+
+  const mimeType = match[1]
+  const buffer = Buffer.from(match[2], 'base64')
+  const ext = getExtensionFromMime(mimeType)
+  const { s3Bucket } = await settingsService.get()
+  const key = `celebrities/${slug}/commercial-license/license-${Date.now()}.${ext}`
+  const result = await s3Service.upload(s3Bucket, key, buffer, mimeType)
+  logger.info(`[Celebrity Onboarding] Commercial license uploaded to S3: ${result.url}`)
+  return result.url
+}
+
+export async function getCelebrityProfileBundle(celebrityId: string) {
+  const [celebrity, templates] = await Promise.all([
+    prisma.celebrity.findUnique({ where: { id: celebrityId } }),
+    prisma.template.findMany({
+      where: { is_active: true, product_types: { has: 'video-ad' } },
+      orderBy: [{ purpose: 'asc' }, { name: 'asc' }],
+      select: { id: true, name: true, purpose: true, product_types: true, duration: true },
+    }),
+  ])
+  if (!celebrity) throw new AppError('Celebrity profile not found', 404)
+
+  return {
+    celebrity,
+    templates,
+  }
+}
+
+export async function presignApprovedMediaUrls(urls: string[]): Promise<string[]> {
+  return Promise.all(
+    urls.map(async (url) => (await s3Service.presignIfS3(url)) || url),
+  )
+}
+
+export async function listAvailableManagersForProfile(_req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const managers = await prisma.manager.findMany({
+      where: { is_active: true },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        agency_name: true,
+      },
+    })
+
+    res.json({ success: true, data: managers })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function applyCelebrityProfileUpdate(
+  celebrityId: string,
+  body: Record<string, unknown>,
+  actorAdminId?: string,
+) {
+  const existingCelebrity = await prisma.celebrity.findUnique({
+    where: { id: celebrityId },
+    select: {
+      slug: true,
+      approval_preferences: true,
+    },
+  })
+  if (!existingCelebrity) throw new AppError('Celebrity profile not found', 404)
+
+  const requiredLabels: Array<[keyof typeof body, string]> = [
+    ['name', 'Full name'],
+    ['name_ar', 'Arabic name'],
+    ['legal_name', 'Legal name'],
+    ['industry', 'Industry'],
+    ['nationality', 'Nationality'],
+    ['nationality_ar', 'Arabic nationality'],
+    ['bio', 'Bio'],
+    ['thumbnail_url', 'Profile image URL'],
+  ]
+  for (const [field, label] of requiredLabels) {
+    if (field in body && !String(body[field] || '').trim()) {
+      throw new AppError(`${label} is required`, 400)
+    }
+  }
+  if ('contact_email' in body) {
+    const email = String(body.contact_email || '').trim().toLowerCase()
+    if (!email) throw new AppError('Portal email is required', 400)
+    if (!isValidEmail(email)) throw new AppError('Enter a valid email address', 400)
+  }
+  if ('contact_phone' in body) {
+    const phone = String(body.contact_phone || '').trim()
+    if (phone && !isDigitsOnlyPhone(phone)) {
+      throw new AppError('Phone number must contain digits only', 400)
+    }
+  }
+  if ('languages' in body && normalizeList(body.languages).length === 0) {
+    throw new AppError('At least one language is required', 400)
+  }
+  if ('social_links' in body) {
+    const socialLinks = normalizeSocialLinks(body.social_links)
+    if (!Object.values(socialLinks).some(Boolean)) {
+      throw new AppError('At least one social media link is required', 400)
+    }
+  }
+  if ('allowed_content_categories' in body && normalizeList(body.allowed_content_categories).length === 0) {
+    throw new AppError('At least one allowed content category is required', 400)
+  }
+  if ('prohibited_industries' in body && normalizeList(body.prohibited_industries).length === 0) {
+    throw new AppError('At least one prohibited industry is required', 400)
+  }
+  if ('competitor_brands' in body && normalizeList(body.competitor_brands).length === 0) {
+    throw new AppError('At least one competitor brand restriction is required', 400)
+  }
+  if ('geographic_availability' in body) {
+    const geographicAvailability = normalizeGeographicAvailability(body.geographic_availability)
+    if (geographicAvailability.allowedRegions.length === 0) {
+      throw new AppError('At least one allowed region is required', 400)
+    }
+  }
+  if ('tone_style_preferences' in body) {
+    const toneStylePreferences = normalizeToneStylePreferences(body.tone_style_preferences)
+    if (!toneStylePreferences.communicationStyle) throw new AppError('Communication style is required', 400)
+    if (!toneStylePreferences.visualStyle) throw new AppError('Visual style is required', 400)
+    if (toneStylePreferences.endorsedTopics.length === 0) throw new AppError('At least one endorsed topic is required', 400)
+  }
+  if ('approval_preferences' in body) {
+    const currentApprovalPreferences = normalizeApprovalPreferences(existingCelebrity.approval_preferences)
+    const incomingApprovalPreferences = body.approval_preferences && typeof body.approval_preferences === 'object'
+      ? body.approval_preferences as Record<string, unknown>
+      : {}
+    const approvalPreferences = {
+      ...currentApprovalPreferences,
+      ...normalizeApprovalPreferences(incomingApprovalPreferences),
+    }
+    const incomingKeys = Object.keys(incomingApprovalPreferences)
+    const licenseOnlyUpdate = incomingKeys.length > 0 && incomingKeys.every((key) => (
+      key === 'commercialLicenseNumber' || key === 'commercialLicenseDocumentUrl'
+    ))
+    if (!Number.isFinite(approvalPreferences.slaHours) || approvalPreferences.slaHours <= 0) {
+      throw new AppError('SLA hours must be greater than zero', 400)
+    }
+    if (!licenseOnlyUpdate && !approvalPreferences.templatePolicyReviewed) {
+      throw new AppError('Template approval policy must be reviewed before saving', 400)
+    }
+  }
+  if ('manager_settings' in body) {
+    const managerSettings = normalizeManagerSettings(body.manager_settings)
+    if (!managerSettings.selfManaged) {
+      if (!managerSettings.managerName) throw new AppError('Manager or agent name is required', 400)
+      if (!managerSettings.managerEmail) throw new AppError('Manager or agent email is required', 400)
+      if (!isValidEmail(managerSettings.managerEmail)) throw new AppError('Enter a valid manager email address', 400)
+      if (managerSettings.managerPhone && !isDigitsOnlyPhone(managerSettings.managerPhone)) {
+        throw new AppError('Manager phone must contain digits only', 400)
+      }
+      if (managerSettings.permissions.length === 0) throw new AppError('Select at least one manager permission', 400)
+    }
+  }
+  if ('approved_media_urls' in body && normalizeList(body.approved_media_urls).length === 0) {
+    throw new AppError('At least one approved media URL is required', 400)
+  }
+  if ('contract_acceptance' in body) {
+    const contractAcceptance = normalizeContractAcceptance(body.contract_acceptance)
+    if (!contractAcceptance.accepted) throw new AppError('You must accept the platform terms to continue', 400)
+    if (!contractAcceptance.signedName) throw new AppError('Signed name is required for contract acceptance', 400)
+  }
+  if ('price_range' in body) {
+    const priceRange = body.price_range as Record<string, { min?: unknown; max?: unknown }> | null
+    const greetingMin = Number(priceRange?.greeting?.min)
+    const greetingMax = Number(priceRange?.greeting?.max)
+    const videoAdMin = Number(priceRange?.['video-ad']?.min)
+    const videoAdMax = Number(priceRange?.['video-ad']?.max)
+    if (!Number.isFinite(greetingMin) || greetingMin < 0) throw new AppError('Greeting minimum price is required', 400)
+    if (!Number.isFinite(greetingMax) || greetingMax < 0) throw new AppError('Greeting maximum price is required', 400)
+    if (greetingMax < greetingMin) throw new AppError('Greeting max price must be greater than or equal to min price', 400)
+    if (!Number.isFinite(videoAdMin) || videoAdMin < 0) throw new AppError('Video ad minimum price is required', 400)
+    if (!Number.isFinite(videoAdMax) || videoAdMax < 0) throw new AppError('Video ad maximum price is required', 400)
+    if (videoAdMax < videoAdMin) throw new AppError('Video ad max price must be greater than or equal to min price', 400)
+  }
+  const updateData: Record<string, unknown> = {}
+
+  const requiredStringFields = ['name', 'name_ar', 'legal_name', 'industry', 'nationality', 'nationality_ar'] as const
+  for (const field of requiredStringFields) {
+    if (field in body && typeof body[field] === 'string') {
+      updateData[field] = body[field].trim()
+    }
+  }
+
+  const optionalStringFields = ['region', 'bio', 'bio_ar', 'thumbnail_url', 'contact_phone', 'avatar_color', 'voice_model_id'] as const
+  for (const field of optionalStringFields) {
+    if (field in body) {
+      const value = body[field]
+      const normalized = typeof value === 'string' ? value.trim() : value
+      updateData[field] = field === 'thumbnail_url'
+        ? await resolveThumbnailUpload(typeof normalized === 'string' ? normalized || undefined : undefined, existingCelebrity.slug)
+        : typeof normalized === 'string'
+          ? normalized || null
+          : normalized
+    }
+  }
+
+  if ('contact_email' in body) updateData.contact_email = String(body.contact_email || '').trim().toLowerCase()
+  if ('languages' in body) updateData.languages = normalizeList(body.languages)
+  if ('tags' in body) updateData.tags = normalizeList(body.tags)
+  if ('tags_ar' in body) updateData.tags_ar = normalizeList(body.tags_ar)
+  if ('social_links' in body) updateData.social_links = normalizeSocialLinks(body.social_links)
+  if ('allowed_content_categories' in body) updateData.allowed_content_categories = normalizeList(body.allowed_content_categories)
+  if ('prohibited_industries' in body) updateData.prohibited_industries = normalizeList(body.prohibited_industries)
+  if ('competitor_brands' in body) updateData.competitor_brands = normalizeList(body.competitor_brands)
+  if ('geographic_availability' in body) updateData.geographic_availability = normalizeGeographicAvailability(body.geographic_availability)
+  if ('tone_style_preferences' in body) updateData.tone_style_preferences = normalizeToneStylePreferences(body.tone_style_preferences)
+  if ('approval_preferences' in body) {
+    const currentApprovalPreferences = normalizeApprovalPreferences(existingCelebrity.approval_preferences)
+    const incomingApprovalPreferences = body.approval_preferences && typeof body.approval_preferences === 'object'
+      ? body.approval_preferences as Record<string, unknown>
+      : {}
+    updateData.approval_preferences = {
+      ...currentApprovalPreferences,
+      ...normalizeApprovalPreferences(incomingApprovalPreferences),
+    }
+  }
+  if ('preapproved_template_ids' in body) updateData.preapproved_template_ids = normalizeList(body.preapproved_template_ids)
+  if ('manager_settings' in body) updateData.manager_settings = normalizeManagerSettings(body.manager_settings)
+  if ('approved_media_urls' in body) {
+    updateData.approved_media_urls = await resolveApprovedMediaUploads(normalizeList(body.approved_media_urls), existingCelebrity.slug)
+  }
+  if ('contract_acceptance' in body) updateData.contract_acceptance = normalizeContractAcceptance(body.contract_acceptance)
+  if ('price_range' in body) updateData.price_range = body.price_range
+
+  const updated = await prisma.celebrity.update({
+    where: { id: celebrityId },
+    data: updateData,
+  })
+
+  const profileCompleted = isCelebrityProfileComplete(updated)
+  const managerSettings = normalizeManagerSettings(updated.manager_settings)
+
+  if (managerSettings.selfManaged) {
+    await prisma.celebrityManagerLink.updateMany({
+      where: { celebrity_id: celebrityId, manager_id: { not: null } },
+      data: { is_active: false },
+    })
+  } else if (profileCompleted && actorAdminId) {
+    const { manager } = await createOrRefreshManagerAccount({
+      name: managerSettings.managerName,
+      email: managerSettings.managerEmail,
+      phone: managerSettings.managerPhone,
+      agencyName: managerSettings.agencyName,
+    })
+
+    await ensureManagerLink({
+      celebrityId,
+      managerId: manager.id,
+      permissions: managerSettings.permissions,
+      linkedBy: actorAdminId,
+      notes: managerSettings.agencyName ? `Agency: ${managerSettings.agencyName}` : null,
+    })
+  }
+
+  return {
+    updated,
+    profileReady: profileCompleted,
+  }
+}
+
+export async function submitCelebrityOnboarding(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const {
+      name,
+      email,
+      phone,
+      region,
+      nationality,
+      industry,
+      languages,
+      bio,
+      otpCode,
+      commercialLicenseNumber,
+      commercialLicenseDocumentUrl,
+    } = req.body as Record<string, unknown>
+
+    if (!String(name || '').trim()) throw new AppError('Name is required', 400)
+    if (!String(email || '').trim()) throw new AppError('Email is required', 400)
+    if (!String(nationality || '').trim()) throw new AppError('Nationality is required', 400)
+    if (!String(industry || '').trim()) throw new AppError('Industry is required', 400)
+    if (!String(otpCode || '').trim()) throw new AppError('Email verification code is required', 400)
+
+    const normalizedEmail = String(email).trim().toLowerCase()
+    if (!isValidEmail(normalizedEmail)) throw new AppError('Enter a valid email address', 400)
+    const normalizedPhone = String(phone || '').trim()
+    if (normalizedPhone && !isDigitsOnlyPhone(normalizedPhone)) {
+      throw new AppError('Phone number must contain digits only', 400)
+    }
+
+    const otpValid = await otpService.verify(normalizedEmail, String(otpCode).trim(), 'email_verification')
+    if (!otpValid) {
+      throw new AppError('Invalid or expired verification code', 400)
+    }
+
+    const existing = await prisma.celebrity.findFirst({
+      where: { contact_email: normalizedEmail },
+      select: { id: true },
+    })
+
+    if (existing) {
+      throw new AppError('An application with this email already exists', 409)
+    }
+
+    const slug = await createUniqueSlug(String(name))
+    const normalizedApprovalPreferences = normalizeApprovalPreferences({
+      commercialLicenseNumber,
+      commercialLicenseDocumentUrl: await resolveCommercialLicenseUpload(
+        String(commercialLicenseDocumentUrl || '').trim() || undefined,
+        slug,
+      ),
+    })
+
+    await prisma.celebrity.create({
+      data: {
+        name: String(name).trim(),
+        name_ar: String(name).trim(),
+        slug,
+        industry: String(industry).trim(),
+        nationality: String(nationality).trim(),
+        nationality_ar: String(nationality).trim(),
+        region: String(region || '').trim() || undefined,
+        contact_email: normalizedEmail,
+        contact_phone: normalizedPhone || undefined,
+        languages: normalizeList(languages),
+        tags: [],
+        tags_ar: [],
+        bio: String(bio || '').trim() || undefined,
+        approval_preferences: normalizedApprovalPreferences,
+        initials: makeInitials(String(name)),
+        is_active: false,
+        onboarding_status: 'pending_review',
+      },
+    })
+
+    res.status(201).json({
+      success: true,
+      message: 'Application received. We will contact you after review.',
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function getCelebrityOnboardingMasters(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const readMasterValues = async (
+      tableName: 'celebrity_language_masters' | 'celebrity_nationality_masters',
+      legacyKey: 'celebrity_language_master' | 'celebrity_nationality_master',
+    ): Promise<string[]> => {
+      try {
+        const rows = await prisma.$queryRawUnsafe<Array<{ value: string }>>(
+          `SELECT "value" FROM "${tableName}" ORDER BY "value" ASC`,
+        )
+        if (rows.length > 0) return rows.map((row) => row.value)
+      } catch {
+        // Fall back to legacy settings storage when the dedicated tables are not present yet.
+      }
+
+      const legacyRow = await prisma.setting.findUnique({ where: { key: legacyKey } })
+      if (!legacyRow?.value) return []
+      try {
+        return normalizeList(JSON.parse(legacyRow.value))
+      } catch {
+        return normalizeList(legacyRow.value)
+      }
+    }
+
+    const [languages, nationalities] = await Promise.all([
+      readMasterValues('celebrity_language_masters', 'celebrity_language_master'),
+      readMasterValues('celebrity_nationality_masters', 'celebrity_nationality_master'),
+    ])
+
+    res.json({
+      success: true,
+      data: {
+        languages,
+        nationalities,
+      },
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function listCelebrityApplications(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { status, search, page = '1', limit = '20' } = req.query
+    const where: Record<string, unknown> = {}
+
+    if (status && status !== 'all') where.onboarding_status = status
+    if (search) {
+      where.OR = [
+        { name: { contains: search as string, mode: 'insensitive' } },
+        { contact_email: { contains: search as string, mode: 'insensitive' } },
+        { industry: { contains: search as string, mode: 'insensitive' } },
+      ]
+    }
+
+    const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 20))
+    const skip = (pageNum - 1) * limitNum
+
+    const [data, total] = await Promise.all([
+      prisma.celebrity.findMany({
+        where,
+        orderBy: [{ onboarding_status: 'asc' }, { applied_at: 'desc' }],
+        skip,
+        take: limitNum,
+        select: {
+          id: true,
+          name: true,
+          industry: true,
+          nationality: true,
+          region: true,
+          contact_email: true,
+          contact_phone: true,
+          languages: true,
+          bio: true,
+          onboarding_status: true,
+          applied_at: true,
+          reviewed_at: true,
+          review_notes: true,
+          is_active: true,
+          portal_admin: { select: { id: true, email: true, is_active: true } },
+          reviewed_by: { select: { id: true, name: true, email: true } },
+        },
+      }),
+      prisma.celebrity.count({ where }),
+    ])
+
+    res.json({
+      success: true,
+      data,
+      total,
+      page: pageNum,
+      pages: Math.ceil(total / limitNum),
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function approveCelebrityApplication(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (req.adminRole !== 'super-admin') throw new AppError('Only super-admin can approve celebrity applications', 403)
+
+    const celebrity = await prisma.celebrity.findUnique({ where: { id: req.params.id } })
+    if (!celebrity) throw new AppError('Celebrity application not found', 404)
+    const { admin, updatedCelebrity } = await createOrRefreshCelebrityPortalAccess(celebrity, req.adminId!)
+
+    res.json({
+      success: true,
+      data: { celebrity: updatedCelebrity, admin: { id: admin.id, email: admin.email } },
+      message: 'Celebrity application approved and portal credentials sent.',
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function rejectCelebrityApplication(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (req.adminRole !== 'super-admin') throw new AppError('Only super-admin can reject celebrity applications', 403)
+
+    const { note } = req.body as { note?: string }
+    const celebrity = await prisma.celebrity.findUnique({ where: { id: req.params.id } })
+    if (!celebrity) throw new AppError('Celebrity application not found', 404)
+
+    const updated = await prisma.celebrity.update({
+      where: { id: celebrity.id },
+      data: {
+        onboarding_status: 'rejected',
+        is_active: false,
+        reviewed_at: new Date(),
+        reviewed_by_admin_id: req.adminId,
+        review_notes: note?.trim() || null,
+      },
+    })
+
+    res.json({ success: true, data: updated, message: 'Celebrity application rejected.' })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function createCelebrityPortalAccess(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (req.adminRole !== 'super-admin') throw new AppError('Only super-admin can create celebrity portal access', 403)
+
+    const celebrity = await prisma.celebrity.findUnique({ where: { id: req.params.id } })
+    if (!celebrity) throw new AppError('Celebrity not found', 404)
+
+    const { admin, updatedCelebrity } = await createOrRefreshCelebrityPortalAccess(celebrity, req.adminId!)
+
+    res.json({
+      success: true,
+      data: { celebrity: updatedCelebrity, admin: { id: admin.id, email: admin.email } },
+      message: 'Celebrity portal access is ready and credentials were sent.',
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function getMyCelebrityProfile(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const celebrityId = await requireCelebrityScope(req)
+    const { celebrity, templates } = await getCelebrityProfileBundle(celebrityId)
+
+    res.json({
+      success: true,
+      data: {
+        ...celebrity,
+        thumbnail_url: await s3Service.presignIfS3(celebrity.thumbnail_url ?? undefined),
+        approved_media_urls: await presignApprovedMediaUrls(celebrity.approved_media_urls ?? []),
+      },
+      templates,
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function updateMyCelebrityProfile(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const celebrityId = await requireCelebrityScope(req)
+    const body = req.body as Record<string, unknown>
+    const { updated, profileReady } = await applyCelebrityProfileUpdate(celebrityId, body, req.adminId)
+
+    res.json({
+      success: true,
+      data: {
+        ...updated,
+        thumbnail_url: await s3Service.presignIfS3(updated.thumbnail_url ?? undefined),
+        approved_media_urls: await presignApprovedMediaUrls(updated.approved_media_urls ?? []),
+      },
+      profileReady,
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function getCelebrityProfileByAdmin(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { celebrity, templates } = await getCelebrityProfileBundle(req.params.id)
+    res.json({
+      success: true,
+      data: {
+        ...celebrity,
+        thumbnail_url: await s3Service.presignIfS3(celebrity.thumbnail_url ?? undefined),
+        approved_media_urls: await presignApprovedMediaUrls(celebrity.approved_media_urls ?? []),
+      },
+      templates,
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function updateCelebrityProfileByAdmin(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = req.body as Record<string, unknown>
+    const { updated, profileReady } = await applyCelebrityProfileUpdate(req.params.id, body, req.adminId)
+    res.json({
+      success: true,
+      data: {
+        ...updated,
+        thumbnail_url: await s3Service.presignIfS3(updated.thumbnail_url ?? undefined),
+        approved_media_urls: await presignApprovedMediaUrls(updated.approved_media_urls ?? []),
+      },
+      profileReady,
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function submitMyCelebrityProfileForReview(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const celebrityId = await requireCelebrityScope(req)
+    const [admin, celebrity] = await Promise.all([
+      prisma.admin.findUnique({
+        where: { id: req.adminId },
+        select: { id: true },
+      }),
+      prisma.celebrity.findUnique({ where: { id: celebrityId } }),
+    ])
+
+    if (!admin || !celebrity) throw new AppError('Celebrity profile not found', 404)
+    if (!isCelebrityProfileComplete(celebrity)) {
+      throw new AppError('Complete all required profile sections before submitting for review', 400)
+    }
+
+    await prisma.admin.update({
+      where: { id: admin.id },
+      data: { profile_completed: true },
+    })
+
+    await prisma.celebrity.update({
+      where: { id: celebrityId },
+      data: {
+        is_active: false,
+        review_notes: null,
+      },
+    })
+
+    res.json({
+      success: true,
+      message: 'Profile submitted for review. Full portal access will unlock after superadmin approval.',
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function requestCelebrityProfileChanges(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const note = String(req.body?.note || '').trim()
+    if (!note) throw new AppError('A review note is required', 400)
+
+    const celebrity = await prisma.celebrity.findUnique({
+      where: { id: req.params.id },
+      include: { portal_admin: true },
+    })
+    if (!celebrity) throw new AppError('Celebrity profile not found', 404)
+
+    await prisma.celebrity.update({
+      where: { id: celebrity.id },
+      data: {
+        is_active: false,
+        review_notes: note,
+      },
+    })
+
+    if (celebrity.portal_admin?.id) {
+      await prisma.admin.update({
+        where: { id: celebrity.portal_admin.id },
+        data: { profile_completed: false },
+      })
+    }
+
+    res.json({
+      success: true,
+      message: 'Profile has been returned to the celebrity for updates.',
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function activateCelebrityProfile(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const celebrity = await prisma.celebrity.findUnique({
+      where: { id: req.params.id },
+      include: { portal_admin: true },
+    })
+    if (!celebrity) throw new AppError('Celebrity profile not found', 404)
+    if (!isCelebrityProfileComplete(celebrity)) {
+      throw new AppError('Celebrity profile is not complete enough to activate', 400)
+    }
+
+    const updated = await prisma.celebrity.update({
+      where: { id: celebrity.id },
+      data: {
+        is_active: true,
+        review_notes: null,
+      },
+    })
+
+    if (celebrity.portal_admin?.id) {
+      await prisma.admin.update({
+        where: { id: celebrity.portal_admin.id },
+        data: { profile_completed: true },
+      })
+    }
+
+    res.json({
+      success: true,
+      data: {
+        ...updated,
+        thumbnail_url: await s3Service.presignIfS3(updated.thumbnail_url ?? undefined),
+        approved_media_urls: await presignApprovedMediaUrls(updated.approved_media_urls ?? []),
+      },
+      message: 'Celebrity activated for full portal access.',
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function listMyCelebrityJobs(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const celebrityId = await requireCelebrityScope(req)
+    const { status, page = '1', limit = '12' } = req.query
+    const where: Record<string, unknown> = { celebrity_id: celebrityId }
+    if (status && status !== 'all') {
+      where.status = (status as string) === 'in-progress' ? 'in_progress' : status
+    }
+
+    const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit as string, 10) || 12))
+    const skip = (pageNum - 1) * limitNum
+
+    const [data, total] = await Promise.all([
+      prisma.videoJob.findMany({
+        where,
+        include: {
+          user: { select: { name: true, email: true } },
+          celebrity: { select: { name: true, thumbnail_url: true } },
+        },
+        orderBy: { created_at: 'desc' },
+        skip,
+        take: limitNum,
+      }),
+      prisma.videoJob.count({ where }),
+    ])
+
+    const signed = await Promise.all(data.map(async (job) => ({
+      ...job,
+      celebrity: job.celebrity
+        ? {
+            ...job.celebrity,
+            thumbnail_url: await s3Service.presignIfS3(job.celebrity.thumbnail_url ?? undefined),
+          }
+        : job.celebrity,
+    })))
+
+    res.json({
+      success: true,
+      data: signed,
+      total,
+      page: pageNum,
+      pages: Math.ceil(total / limitNum),
+    })
+  } catch (err) {
+    next(err)
+  }
+}

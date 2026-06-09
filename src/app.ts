@@ -19,6 +19,7 @@ import templateAssetRoutes from './routes/templateAsset.routes'
 import productTypeRoutes   from './routes/productType.routes'
 import webhookRoutes      from './routes/webhook.routes'
 import imageAdRoutes      from './routes/imageAd.routes'
+import celebrityOnboardingRoutes from './routes/celebrityOnboarding.routes'
 
 const app = express()
 
@@ -80,6 +81,7 @@ app.use('/api/templates',       templateRoutes)
 app.use('/api/template-assets', templateAssetRoutes)
 app.use('/api/product-types',   productTypeRoutes)
 app.use('/api/image-ads',     imageAdRoutes)
+app.use('/api/celebrity-onboarding', celebrityOnboardingRoutes)
 
 // ── 404 ───────────────────────────────────────────────────
 app.use((_req, res) => {

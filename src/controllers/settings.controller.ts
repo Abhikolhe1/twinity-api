@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import { randomUUID } from 'crypto'
 import prisma from '../lib/prisma'
 import { settingsService } from '../services/settings.service'
 import { s3Service } from '../services/s3.service'
@@ -115,6 +116,79 @@ async function presignSettingsData(data: Record<string, unknown>): Promise<Recor
   return data
 }
 
+type CelebrityMasterType = 'languages' | 'nationalities'
+
+function normalizeMasterValues(input: unknown): string[] {
+  const values = Array.isArray(input) ? input : [input]
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))]
+}
+
+async function getCelebrityMasterValues(type: CelebrityMasterType): Promise<string[]> {
+  const tableName = type === 'languages' ? 'celebrity_language_masters' : 'celebrity_nationality_masters'
+  const legacyKey = type === 'languages' ? 'celebrity_language_master' : 'celebrity_nationality_master'
+
+  try {
+    const rows = await prisma.$queryRawUnsafe<Array<{ value: string }>>(
+      `SELECT "value" FROM "${tableName}" ORDER BY "value" ASC`,
+    )
+    if (rows.length > 0) return rows.map((row) => row.value)
+  } catch {
+    // Fall back to legacy settings storage when the dedicated tables are not present yet.
+  }
+
+  const legacyRow = await prisma.setting.findUnique({ where: { key: legacyKey } })
+  if (!legacyRow?.value) return []
+
+  try {
+    return normalizeMasterValues(JSON.parse(legacyRow.value))
+  } catch {
+    return normalizeMasterValues(legacyRow.value)
+  }
+}
+
+async function addCelebrityMasterValue(type: CelebrityMasterType, value: string): Promise<string[]> {
+  const id = randomUUID()
+  if (type === 'languages') {
+    await prisma.$executeRaw`
+      INSERT INTO "celebrity_language_masters" ("id", "value", "created_at", "updated_at")
+      VALUES (${id}, ${value}, NOW(), NOW())
+      ON CONFLICT ("value") DO NOTHING
+    `
+    return getCelebrityMasterValues(type)
+  }
+
+  await prisma.$executeRaw`
+    INSERT INTO "celebrity_nationality_masters" ("id", "value", "created_at", "updated_at")
+    VALUES (${id}, ${value}, NOW(), NOW())
+    ON CONFLICT ("value") DO NOTHING
+  `
+  return getCelebrityMasterValues(type)
+}
+
+async function replaceCelebrityMasterValues(type: CelebrityMasterType, values: string[]): Promise<string[]> {
+  const normalized = normalizeMasterValues(values)
+
+  if (type === 'languages') {
+    await prisma.$transaction([
+      prisma.$executeRaw`DELETE FROM "celebrity_language_masters"`,
+      ...normalized.map((value) => prisma.$executeRaw`
+        INSERT INTO "celebrity_language_masters" ("id", "value", "created_at", "updated_at")
+        VALUES (${randomUUID()}, ${value}, NOW(), NOW())
+      `),
+    ])
+    return getCelebrityMasterValues(type)
+  }
+
+  await prisma.$transaction([
+    prisma.$executeRaw`DELETE FROM "celebrity_nationality_masters"`,
+    ...normalized.map((value) => prisma.$executeRaw`
+      INSERT INTO "celebrity_nationality_masters" ("id", "value", "created_at", "updated_at")
+      VALUES (${randomUUID()}, ${value}, NOW(), NOW())
+    `),
+  ])
+  return getCelebrityMasterValues(type)
+}
+
 export async function getSettings(_req: Request, res: Response): Promise<void> {
   try {
     const rows = await prisma.setting.findMany()
@@ -216,5 +290,85 @@ export async function deleteWatermarkImage(_req: Request, res: Response): Promis
     res.json({ success: true })
   } catch {
     res.status(500).json({ success: false, message: 'Failed to remove watermark image' })
+  }
+}
+
+export async function getCelebrityMasters(_req: Request, res: Response): Promise<void> {
+  try {
+    const [languages, nationalities] = await Promise.all([
+      getCelebrityMasterValues('languages'),
+      getCelebrityMasterValues('nationalities'),
+    ])
+    res.json({ success: true, data: { languages, nationalities } })
+  } catch {
+    res.status(500).json({ success: false, message: 'Failed to load celebrity masters' })
+  }
+}
+
+export async function replaceCelebrityMasters(req: Request, res: Response): Promise<void> {
+  try {
+    const languages = normalizeMasterValues(req.body?.languages)
+    const nationalities = normalizeMasterValues(req.body?.nationalities)
+
+    const [nextLanguages, nextNationalities] = await Promise.all([
+      replaceCelebrityMasterValues('languages', languages),
+      replaceCelebrityMasterValues('nationalities', nationalities),
+    ])
+
+    res.json({ success: true, data: { languages: nextLanguages, nationalities: nextNationalities } })
+  } catch {
+    res.status(500).json({ success: false, message: 'Failed to save celebrity masters' })
+  }
+}
+
+export async function getCelebrityMaster(req: Request, res: Response): Promise<void> {
+  try {
+    const type = req.params.type as CelebrityMasterType
+    if (type !== 'languages' && type !== 'nationalities') {
+      res.status(400).json({ success: false, message: 'Unsupported celebrity master type' })
+      return
+    }
+
+    const values = await getCelebrityMasterValues(type)
+    res.json({ success: true, data: { type, values } })
+  } catch {
+    res.status(500).json({ success: false, message: 'Failed to load celebrity master' })
+  }
+}
+
+export async function addCelebrityMaster(req: Request, res: Response): Promise<void> {
+  try {
+    const type = req.params.type as CelebrityMasterType
+    if (type !== 'languages' && type !== 'nationalities') {
+      res.status(400).json({ success: false, message: 'Unsupported celebrity master type' })
+      return
+    }
+
+    const value = String(req.body?.value || '').trim()
+    if (!value) {
+      res.status(400).json({ success: false, message: 'value is required' })
+      return
+    }
+
+    const values = await addCelebrityMasterValue(type, value)
+    res.json({ success: true, data: { type, values } })
+  } catch {
+    res.status(500).json({ success: false, message: 'Failed to add celebrity master value' })
+  }
+}
+
+export async function replaceCelebrityMaster(req: Request, res: Response): Promise<void> {
+  try {
+    const type = req.params.type as CelebrityMasterType
+    if (type !== 'languages' && type !== 'nationalities') {
+      res.status(400).json({ success: false, message: 'Unsupported celebrity master type' })
+      return
+    }
+
+    const values = normalizeMasterValues(req.body?.values)
+    const nextValues = await replaceCelebrityMasterValues(type, values)
+    res.json({ success: true, data: { type, values: nextValues } })
+  } catch {
+    res.status(500).json({ success: false, message: 'Failed to replace celebrity master values' })
   }
 }

@@ -3,7 +3,7 @@ import multer from 'multer'
 import { adminLogin, getDashboardStats, listUsers, updateUserStatus, adminListCelebrities, adminForgotPassword, adminResetPassword } from '../controllers/admin.controller'
 import { getMe } from '../controllers/team.controller'
 import { requireAdmin, requirePermission } from '../middleware/adminAuth'
-import { getSettings, updateSettings, getBlockedWords, addBlockedWord, removeBlockedWord, uploadWatermarkImage, deleteWatermarkImage } from '../controllers/settings.controller'
+import { getSettings, updateSettings, getBlockedWords, addBlockedWord, removeBlockedWord, uploadWatermarkImage, deleteWatermarkImage, getCelebrityMasters, replaceCelebrityMasters, getCelebrityMaster, addCelebrityMaster, replaceCelebrityMaster } from '../controllers/settings.controller'
 
 const router = Router()
 
@@ -26,6 +26,11 @@ router.patch('/users/:id/status', requireAdmin, requirePermission('users.manage'
 router.get('/celebrities', requireAdmin, adminListCelebrities)
 router.get('/settings', requireAdmin, getSettings)
 router.put('/settings', requireAdmin, requirePermission('settings.manage'), updateSettings)
+router.get('/settings/celebrity-masters', requireAdmin, getCelebrityMasters)
+router.put('/settings/celebrity-masters', requireAdmin, requirePermission('settings.manage'), replaceCelebrityMasters)
+router.get('/settings/celebrity-masters/:type', requireAdmin, getCelebrityMaster)
+router.post('/settings/celebrity-masters/:type', requireAdmin, requirePermission('settings.manage'), addCelebrityMaster)
+router.put('/settings/celebrity-masters/:type', requireAdmin, requirePermission('settings.manage'), replaceCelebrityMaster)
 router.post('/settings/watermark-image', requireAdmin, requirePermission('settings.manage'), watermarkUpload, uploadWatermarkImage)
 router.delete('/settings/watermark-image', requireAdmin, requirePermission('settings.manage'), deleteWatermarkImage)
 // Blocked words — public GET for customer app, admin-only POST/DELETE
