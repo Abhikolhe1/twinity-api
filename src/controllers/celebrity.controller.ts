@@ -7,44 +7,6 @@ import { s3Service } from '../services/s3.service'
 import { settingsService } from '../services/settings.service'
 import { logger } from '../config/logger'
 
-type CommercialApprovalPreferences = {
-  commercialLicenseNumber?: string
-  commercialLicenseDocumentUrl?: string
-}
-
-function normalizeMarketText(value?: string | null): string {
-  return String(value || '').trim().toLowerCase()
-}
-
-function requiresCommercialLicense(nationality?: string | null, region?: string | null): boolean {
-  const isRestrictedMarket = (value?: string | null) => {
-    const normalized = normalizeMarketText(value)
-    return normalized === 'saudi arabia'
-      || normalized === 'saudi'
-      || normalized === 'uae'
-      || normalized === 'united arab emirates'
-  }
-
-  return isRestrictedMarket(nationality) || isRestrictedMarket(region)
-}
-
-function isCommerciallyEligible(celebrity: {
-  nationality?: string | null
-  region?: string | null
-  approval_preferences?: unknown
-}): boolean {
-  if (!requiresCommercialLicense(celebrity.nationality, celebrity.region)) return true
-
-  const approvalPreferences = celebrity.approval_preferences && typeof celebrity.approval_preferences === 'object'
-    ? celebrity.approval_preferences as CommercialApprovalPreferences
-    : {}
-
-  return Boolean(
-    approvalPreferences.commercialLicenseNumber?.trim()
-    || approvalPreferences.commercialLicenseDocumentUrl?.trim(),
-  )
-}
-
 async function maybeProcessThumbnail(thumbnailUrl: string | undefined, processThumbnail: boolean): Promise<string | undefined> {
   if (!processThumbnail) return thumbnailUrl
   if (!thumbnailUrl?.startsWith('data:')) return thumbnailUrl
@@ -77,77 +39,22 @@ async function signDoc(doc: Record<string, unknown>): Promise<Record<string, unk
   return { ...doc, thumbnail_url: await s3Service.presignIfS3(doc.thumbnail_url as string | undefined) }
 }
 
-function isCelebrityProfileReadyForActivation(celebrity: any): boolean {
-  const socialLinks = celebrity.social_links && typeof celebrity.social_links === 'object'
-    ? Object.values(celebrity.social_links as Record<string, unknown>).some(Boolean)
-    : false
-  const geographicAvailability = celebrity.geographic_availability && typeof celebrity.geographic_availability === 'object'
-    ? celebrity.geographic_availability as { allowedRegions?: string[] }
-    : {}
-  const toneStylePreferences = celebrity.tone_style_preferences && typeof celebrity.tone_style_preferences === 'object'
-    ? celebrity.tone_style_preferences as { communicationStyle?: string; visualStyle?: string; endorsedTopics?: string[] }
-    : {}
-  const approvalPreferences = celebrity.approval_preferences && typeof celebrity.approval_preferences === 'object'
-    ? celebrity.approval_preferences as { templatePolicyReviewed?: boolean; slaHours?: number }
-    : {}
-  const managerSettings = celebrity.manager_settings && typeof celebrity.manager_settings === 'object'
-    ? celebrity.manager_settings as { selfManaged?: boolean; managerName?: string; managerEmail?: string; permissions?: string[] }
-    : {}
-  const contractAcceptance = celebrity.contract_acceptance && typeof celebrity.contract_acceptance === 'object'
-    ? celebrity.contract_acceptance as { accepted?: boolean; signedName?: string }
-    : {}
-
-  const managerReady = managerSettings.selfManaged !== false
-    ? true
-    : Boolean(managerSettings.managerName && managerSettings.managerEmail && managerSettings.permissions?.length)
-
-  return Boolean(
-    celebrity.name?.trim() &&
-    celebrity.name_ar?.trim() &&
-    celebrity.legal_name?.trim() &&
-    celebrity.industry?.trim() &&
-    celebrity.nationality?.trim() &&
-    celebrity.nationality_ar?.trim() &&
-    celebrity.bio?.trim() &&
-    celebrity.thumbnail_url?.trim() &&
-    Array.isArray(celebrity.languages) && celebrity.languages.length > 0 &&
-    socialLinks &&
-    Array.isArray(celebrity.allowed_content_categories) && celebrity.allowed_content_categories.length > 0 &&
-    Array.isArray(celebrity.prohibited_industries) && celebrity.prohibited_industries.length > 0 &&
-    Array.isArray(celebrity.competitor_brands) && celebrity.competitor_brands.length > 0 &&
-    Array.isArray(geographicAvailability.allowedRegions) && geographicAvailability.allowedRegions.length > 0 &&
-    toneStylePreferences.communicationStyle?.trim() &&
-    toneStylePreferences.visualStyle?.trim() &&
-    Array.isArray(toneStylePreferences.endorsedTopics) && toneStylePreferences.endorsedTopics.length > 0 &&
-    Number(approvalPreferences.slaHours) > 0 &&
-    approvalPreferences.templatePolicyReviewed &&
-    managerReady &&
-    Array.isArray(celebrity.approved_media_urls) && celebrity.approved_media_urls.length > 0 &&
-    contractAcceptance.accepted &&
-    contractAcceptance.signedName?.trim()
-  )
-}
-
 export async function listCelebrities(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { industry, search, featured, productType } = req.query
+    const { industry, search, featured } = req.query
     const where: Record<string, unknown> = { is_active: true }
     if (industry && industry !== 'all') where.industry = industry
     if (featured === 'true') where.is_featured = true
     if (search) {
       where.OR = [
-        { name:    { contains: search as string, mode: 'insensitive' } },
-        { name_ar: { contains: search as string, mode: 'insensitive' } },
+        { name: { contains: search as string, mode: 'insensitive' } },
       ]
     }
     const raw = await prisma.celebrity.findMany({
       where,
       orderBy: [{ is_featured: 'desc' }, { total_orders: 'desc' }],
     })
-    const filteredRaw = String(productType || '').trim() === 'video-ad' || String(productType || '').trim() === 'image-ad'
-      ? raw.filter((celebrity) => isCommerciallyEligible(celebrity))
-      : raw
-    const data = await Promise.all(filteredRaw.map(c => signDoc(c as unknown as Record<string, unknown>)))
+    const data = await Promise.all(raw.map(c => signDoc(c as unknown as Record<string, unknown>)))
     res.json({ success: true, data, total: data.length })
   } catch (err) {
     next(err)
@@ -176,31 +83,12 @@ export async function createCelebrity(req: Request, res: Response, next: NextFun
     const celeb = await prisma.celebrity.create({
       data: {
         name:               body.name,
-        name_ar:            body.name_ar ?? body.nameAr,
-        legal_name:         body.legal_name ?? body.legalName,
         slug,
         industry:           body.industry,
         nationality:        body.nationality,
-        nationality_ar:     body.nationality_ar ?? body.nationalityAr,
-        region:             body.region,
-        contact_email:      body.contact_email ?? body.contactEmail,
-        contact_phone:      body.contact_phone ?? body.contactPhone,
         languages:          Array.isArray(body.languages) ? body.languages : [],
         tags:               Array.isArray(body.tags) ? body.tags : [],
-        tags_ar:            Array.isArray(body.tags_ar ?? body.tagsAr) ? (body.tags_ar ?? body.tagsAr) : [],
         bio:                body.bio,
-        bio_ar:             body.bio_ar ?? body.bioAr,
-        social_links:       body.social_links ?? body.socialLinks ?? undefined,
-        allowed_content_categories: Array.isArray(body.allowed_content_categories ?? body.allowedContentCategories) ? (body.allowed_content_categories ?? body.allowedContentCategories) : [],
-        prohibited_industries: Array.isArray(body.prohibited_industries ?? body.prohibitedIndustries) ? (body.prohibited_industries ?? body.prohibitedIndustries) : [],
-        competitor_brands:  Array.isArray(body.competitor_brands ?? body.competitorBrands) ? (body.competitor_brands ?? body.competitorBrands) : [],
-        geographic_availability: body.geographic_availability ?? body.geographicAvailability ?? undefined,
-        tone_style_preferences: body.tone_style_preferences ?? body.toneStylePreferences ?? undefined,
-        approval_preferences: body.approval_preferences ?? body.approvalPreferences ?? undefined,
-        preapproved_template_ids: Array.isArray(body.preapproved_template_ids ?? body.preapprovedTemplateIds) ? (body.preapproved_template_ids ?? body.preapprovedTemplateIds) : [],
-        manager_settings:   body.manager_settings ?? body.managerSettings ?? undefined,
-        approved_media_urls: Array.isArray(body.approved_media_urls ?? body.approvedMediaUrls) ? (body.approved_media_urls ?? body.approvedMediaUrls) : [],
-        contract_acceptance: body.contract_acceptance ?? body.contractAcceptance ?? undefined,
         avatar_color:       body.avatar_color ?? body.avatarColor,
         initials:           body.initials,
         thumbnail_url:      body.thumbnail_url,
@@ -208,10 +96,6 @@ export async function createCelebrity(req: Request, res: Response, next: NextFun
         training_audio_url: body.training_audio_url ?? body.trainingAudioUrl,
         is_active:          body.is_active ?? body.isActive ?? true,
         is_featured:        body.is_featured ?? body.isFeatured ?? false,
-        onboarding_status:  body.onboarding_status ?? body.onboardingStatus ?? undefined,
-        applied_at:         body.applied_at ?? body.appliedAt ?? undefined,
-        reviewed_at:        body.reviewed_at ?? body.reviewedAt ?? undefined,
-        review_notes:       body.review_notes ?? body.reviewNotes,
         price_range:        body.price_range ?? body.priceRange ?? undefined,
         total_orders:       body.total_orders ?? body.totalOrders ?? 0,
       },
@@ -237,36 +121,16 @@ export async function updateCelebrity(req: Request, res: Response, next: NextFun
 
     const updateData: Record<string, unknown> = {}
     const fieldMap: Record<string, string> = {
-      name: 'name', nameAr: 'name_ar', name_ar: 'name_ar',
-      legalName: 'legal_name', legal_name: 'legal_name',
+      name: 'name',
       industry: 'industry', nationality: 'nationality',
-      nationalityAr: 'nationality_ar', nationality_ar: 'nationality_ar',
-      region: 'region', contactEmail: 'contact_email', contact_email: 'contact_email',
-      contactPhone: 'contact_phone', contact_phone: 'contact_phone',
       languages: 'languages', tags: 'tags',
-      tagsAr: 'tags_ar', tags_ar: 'tags_ar',
-      bio: 'bio', bioAr: 'bio_ar', bio_ar: 'bio_ar',
-      socialLinks: 'social_links', social_links: 'social_links',
-      allowedContentCategories: 'allowed_content_categories', allowed_content_categories: 'allowed_content_categories',
-      prohibitedIndustries: 'prohibited_industries', prohibited_industries: 'prohibited_industries',
-      competitorBrands: 'competitor_brands', competitor_brands: 'competitor_brands',
-      geographicAvailability: 'geographic_availability', geographic_availability: 'geographic_availability',
-      toneStylePreferences: 'tone_style_preferences', tone_style_preferences: 'tone_style_preferences',
-      approvalPreferences: 'approval_preferences', approval_preferences: 'approval_preferences',
-      preapprovedTemplateIds: 'preapproved_template_ids', preapproved_template_ids: 'preapproved_template_ids',
-      managerSettings: 'manager_settings', manager_settings: 'manager_settings',
-      approvedMediaUrls: 'approved_media_urls', approved_media_urls: 'approved_media_urls',
-      contractAcceptance: 'contract_acceptance', contract_acceptance: 'contract_acceptance',
+      bio: 'bio',
       avatarColor: 'avatar_color', avatar_color: 'avatar_color',
       initials: 'initials',
       voiceModelId: 'voice_model_id', voice_model_id: 'voice_model_id',
       trainingAudioUrl: 'training_audio_url', training_audio_url: 'training_audio_url',
       isActive: 'is_active', is_active: 'is_active',
       isFeatured: 'is_featured', is_featured: 'is_featured',
-      onboardingStatus: 'onboarding_status', onboarding_status: 'onboarding_status',
-      appliedAt: 'applied_at', applied_at: 'applied_at',
-      reviewedAt: 'reviewed_at', reviewed_at: 'reviewed_at',
-      reviewNotes: 'review_notes', review_notes: 'review_notes',
       priceRange: 'price_range', price_range: 'price_range',
       totalOrders: 'total_orders', total_orders: 'total_orders',
     }
@@ -289,9 +153,6 @@ export async function toggleCelebrityStatus(req: Request, res: Response, next: N
   try {
     const existing = await prisma.celebrity.findUnique({ where: { id: req.params.id } })
     if (!existing) throw new AppError('Celebrity not found', 404)
-    if (!existing.is_active && !isCelebrityProfileReadyForActivation(existing)) {
-      throw new AppError('Celebrity profile is not completed yet. Complete and review the profile before activating.', 400)
-    }
     const celeb = await prisma.celebrity.update({
       where: { id: req.params.id },
       data: { is_active: !existing.is_active },

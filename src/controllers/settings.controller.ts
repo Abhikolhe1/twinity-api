@@ -4,8 +4,6 @@ import { settingsService } from '../services/settings.service'
 import { s3Service } from '../services/s3.service'
 
 const MASKED_SENTINEL = '**'
-const CELEBRITY_LANGUAGE_MASTER_KEY = 'celebrity_language_master'
-const CELEBRITY_NATIONALITY_MASTER_KEY = 'celebrity_nationality_master'
 
 function isMasked(val: string | undefined): boolean {
   return typeof val === 'string' && val.includes(MASKED_SENTINEL)
@@ -117,66 +115,6 @@ async function presignSettingsData(data: Record<string, unknown>): Promise<Recor
   return data
 }
 
-function normalizeMasterItems(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return Array.from(new Set(value.map((item) => String(item).trim()).filter(Boolean)))
-  }
-  if (typeof value === 'string') {
-    return Array.from(new Set(
-      value
-        .split(/\r?\n|,/)
-        .map((item) => item.trim())
-        .filter(Boolean),
-    ))
-  }
-  return []
-}
-
-async function readCelebrityMasters() {
-  const rows = await prisma.setting.findMany({
-    where: {
-      key: {
-        in: [CELEBRITY_LANGUAGE_MASTER_KEY, CELEBRITY_NATIONALITY_MASTER_KEY],
-      },
-    },
-  })
-
-  const rowByKey = new Map(rows.map((row) => [row.key, row.value]))
-  const parseStored = (raw?: string) => {
-    if (!raw) return []
-    try {
-      return normalizeMasterItems(JSON.parse(raw))
-    } catch {
-      return normalizeMasterItems(raw)
-    }
-  }
-
-  return {
-    languages: parseStored(rowByKey.get(CELEBRITY_LANGUAGE_MASTER_KEY)),
-    nationalities: parseStored(rowByKey.get(CELEBRITY_NATIONALITY_MASTER_KEY)),
-  }
-}
-
-function getCelebrityMasterKey(type?: string): string | null {
-  if (type === 'languages') return CELEBRITY_LANGUAGE_MASTER_KEY
-  if (type === 'nationalities') return CELEBRITY_NATIONALITY_MASTER_KEY
-  return null
-}
-
-async function readCelebrityMasterList(type: 'languages' | 'nationalities'): Promise<string[]> {
-  const key = getCelebrityMasterKey(type)
-  if (!key) return []
-
-  const row = await prisma.setting.findUnique({ where: { key } })
-  if (!row?.value) return []
-
-  try {
-    return normalizeMasterItems(JSON.parse(row.value))
-  } catch {
-    return normalizeMasterItems(row.value)
-  }
-}
-
 export async function getSettings(_req: Request, res: Response): Promise<void> {
   try {
     const rows = await prisma.setting.findMany()
@@ -184,111 +122,6 @@ export async function getSettings(_req: Request, res: Response): Promise<void> {
     res.json({ success: true, data })
   } catch {
     res.status(500).json({ success: false, message: 'Failed to load settings' })
-  }
-}
-
-export async function getCelebrityMasters(_req: Request, res: Response): Promise<void> {
-  try {
-    const data = await readCelebrityMasters()
-    res.json({ success: true, data })
-  } catch {
-    res.status(500).json({ success: false, message: 'Failed to load celebrity masters' })
-  }
-}
-
-export async function updateCelebrityMasters(req: Request, res: Response): Promise<void> {
-  try {
-    const languages = normalizeMasterItems(req.body?.languages)
-    const nationalities = normalizeMasterItems(req.body?.nationalities)
-
-    await Promise.all([
-      prisma.setting.upsert({
-        where: { key: CELEBRITY_LANGUAGE_MASTER_KEY },
-        update: { value: JSON.stringify(languages), type: 'general' },
-        create: { key: CELEBRITY_LANGUAGE_MASTER_KEY, value: JSON.stringify(languages), type: 'general' },
-      }),
-      prisma.setting.upsert({
-        where: { key: CELEBRITY_NATIONALITY_MASTER_KEY },
-        update: { value: JSON.stringify(nationalities), type: 'general' },
-        create: { key: CELEBRITY_NATIONALITY_MASTER_KEY, value: JSON.stringify(nationalities), type: 'general' },
-      }),
-    ])
-
-    settingsService.invalidate()
-    res.json({ success: true, data: { languages, nationalities } })
-  } catch {
-    res.status(500).json({ success: false, message: 'Failed to save celebrity masters' })
-  }
-}
-
-export async function getCelebrityMasterByType(req: Request, res: Response): Promise<void> {
-  try {
-    const type = String(req.params.type || '') as 'languages' | 'nationalities'
-    const key = getCelebrityMasterKey(type)
-    if (!key) {
-      res.status(400).json({ success: false, message: 'Unsupported celebrity master type' })
-      return
-    }
-
-    const values = await readCelebrityMasterList(type)
-    res.json({ success: true, data: { type, values } })
-  } catch {
-    res.status(500).json({ success: false, message: 'Failed to load celebrity master' })
-  }
-}
-
-export async function addCelebrityMasterValue(req: Request, res: Response): Promise<void> {
-  try {
-    const type = String(req.params.type || '') as 'languages' | 'nationalities'
-    const key = getCelebrityMasterKey(type)
-    if (!key) {
-      res.status(400).json({ success: false, message: 'Unsupported celebrity master type' })
-      return
-    }
-
-    const value = String(req.body?.value || '').trim()
-    if (!value) {
-      res.status(400).json({ success: false, message: 'value is required' })
-      return
-    }
-
-    const current = await readCelebrityMasterList(type)
-    const values = Array.from(new Set([...current, value]))
-
-    await prisma.setting.upsert({
-      where: { key },
-      update: { value: JSON.stringify(values), type: 'general' },
-      create: { key, value: JSON.stringify(values), type: 'general' },
-    })
-
-    settingsService.invalidate()
-    res.json({ success: true, data: { type, values } })
-  } catch {
-    res.status(500).json({ success: false, message: 'Failed to add celebrity master value' })
-  }
-}
-
-export async function replaceCelebrityMasterValues(req: Request, res: Response): Promise<void> {
-  try {
-    const type = String(req.params.type || '') as 'languages' | 'nationalities'
-    const key = getCelebrityMasterKey(type)
-    if (!key) {
-      res.status(400).json({ success: false, message: 'Unsupported celebrity master type' })
-      return
-    }
-
-    const values = normalizeMasterItems(req.body?.values)
-
-    await prisma.setting.upsert({
-      where: { key },
-      update: { value: JSON.stringify(values), type: 'general' },
-      create: { key, value: JSON.stringify(values), type: 'general' },
-    })
-
-    settingsService.invalidate()
-    res.json({ success: true, data: { type, values } })
-  } catch {
-    res.status(500).json({ success: false, message: 'Failed to replace celebrity master values' })
   }
 }
 

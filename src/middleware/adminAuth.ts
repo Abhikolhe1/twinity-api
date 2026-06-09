@@ -10,8 +10,6 @@ export interface AdminRequest extends Request {
   adminId?: string
   adminRole?: AdminRole
   adminPermissions?: string[]
-  celebrityId?: string | null
-  celebrityActive?: boolean
 }
 
 export async function requireAdmin(req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
@@ -28,27 +26,15 @@ export async function requireAdmin(req: AdminRequest, res: Response, next: NextF
     const decoded = jwt.verify(token, env.adminJwtSecret) as { adminId: string; role: string }
     const admin = await prisma.admin.findUnique({
       where: { id: decoded.adminId },
-      select: {
-        is_active: true,
-        role: true,
-        role_id: true,
-        celebrity_id: true,
-        celebrity: { select: { onboarding_status: true, is_active: true } },
-      },
+      select: { is_active: true, role: true, role_id: true },
     })
     if (!admin || !admin.is_active) {
       res.status(401).json({ success: false, message: 'Admin account is not active' })
       return
     }
-    if (admin.celebrity_id && admin.celebrity?.onboarding_status !== 'approved') {
-      res.status(401).json({ success: false, message: 'Celebrity portal access is not approved yet' })
-      return
-    }
 
     req.adminId = decoded.adminId
     req.adminRole = (decoded.role as string).replace('_', '-') as AdminRole
-    req.celebrityId = admin.celebrity_id
-    req.celebrityActive = admin.celebrity?.is_active
 
     if (admin.role === 'super_admin') {
       req.adminPermissions = [...ALL_PERMISSIONS]
@@ -81,10 +67,6 @@ export function requireRole(...roles: AdminRole[]) {
 export function requirePermission(permission: string) {
   return (req: AdminRequest, res: Response, next: NextFunction): void => {
     if (req.adminRole === 'super-admin') { next(); return }
-    if (permission === 'celebrity.orders.view' && req.celebrityId && req.celebrityActive !== true) {
-      res.status(403).json({ success: false, message: 'Celebrity profile is still under review. Orders unlock after activation.' })
-      return
-    }
     if (!req.adminPermissions?.includes(permission)) {
       res.status(403).json({ success: false, message: `Permission denied: ${permission}` })
       return

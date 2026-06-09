@@ -117,20 +117,13 @@ export const s3Service = {
     const parsed  = parseS3Url(rawUrl)
     if (!parsed) return url   // not an S3 URL — return as-is
 
-    // No S3 credentials — return the base S3 URL (no query string) so video
-    // players can still load it on public buckets, and expired presigned query
-    // strings are not passed through.
-    const s3 = await buildClient()
-    if (!s3) return rawUrl
-
     const cached = presignCache.get(rawUrl)
     if (cached && cached.expiresAt - Date.now() > PRESIGN_BUFFER) {
       return cached.signedUrl
     }
 
-    const { bucket, key } = parsed
-    const signedUrl = await getSignedUrl(s3.client, new GetObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: PRESIGN_TTL })
-    logger.info(`[S3] Pre-signed URL (cached) generated for key=${key}`)
+    const { bucket, key } = parseS3Url(rawUrl)!
+    const signedUrl = await this.getPresignedUrl(bucket, key, PRESIGN_TTL)
     presignCache.set(rawUrl, { signedUrl, expiresAt: Date.now() + PRESIGN_TTL * 1000 })
     return signedUrl
   },
@@ -164,9 +157,7 @@ export const s3Service = {
     if (!url) return url
     const parsed = parseS3Url(url)
     if (!parsed) return url
-    const s3 = await buildClient()
-    if (!s3) return url
-    return getSignedUrl(s3.client, new GetObjectCommand({ Bucket: parsed.bucket, Key: parsed.key }), { expiresIn })
+    return this.getPresignedUrl(parsed.bucket, parsed.key, expiresIn)
   },
 
   /**

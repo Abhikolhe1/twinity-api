@@ -14,15 +14,11 @@ import leadRoutes       from './routes/lead.routes'
 import adminRoutes      from './routes/admin.routes'
 import roleRoutes       from './routes/role.routes'
 import teamRoutes       from './routes/team.routes'
-import templateRoutes     from './routes/template.routes'
-import productTypeRoutes  from './routes/productType.routes'
+import templateRoutes      from './routes/template.routes'
+import templateAssetRoutes from './routes/templateAsset.routes'
+import productTypeRoutes   from './routes/productType.routes'
 import webhookRoutes      from './routes/webhook.routes'
 import imageAdRoutes      from './routes/imageAd.routes'
-import celebrityOnboardingRoutes from './routes/celebrityOnboarding.routes'
-import otpRoutes          from './routes/otp.routes'
-import managerLinkRoutes  from './routes/managerLink.routes'
-import managerDashboardRoutes from './routes/managerDashboard.routes'
-import managerRoutes      from './routes/manager.routes'
 
 const app = express()
 
@@ -49,10 +45,10 @@ app.use(cors({
 // The verify callback stores the raw buffer on req so webhook handlers
 // can verify HMAC signatures (e.g. Sync.so Sync-Signature header).
 app.use(express.json({
-  limit: '25mb',
+  limit: '10mb',
   verify: (req: any, _res, buf) => { req.rawBody = buf },
 }))
-app.use(express.urlencoded({ extended: true, limit: '25mb' }))
+app.use(express.urlencoded({ extended: true }))
 
 // ── Webhooks (before rate-limit — server-to-server callbacks) ─────────────
 app.use('/api/webhooks', webhookRoutes)
@@ -61,20 +57,7 @@ app.use('/api/webhooks', webhookRoutes)
 app.use('/api/', rateLimit({
   windowMs: env.rateLimit.windowMs,
   max: env.rateLimit.max,
-  skip: (req) => req.path.startsWith('/admin') || req.path.startsWith('/manager'),
   message: { success: false, message: 'Too many requests, please try again later.' },
-}))
-
-app.use('/api/admin', rateLimit({
-  windowMs: env.rateLimit.adminWindowMs,
-  max: env.rateLimit.adminMax,
-  message: { success: false, message: 'Too many admin requests, please try again shortly.' },
-}))
-
-app.use('/api/manager', rateLimit({
-  windowMs: env.rateLimit.adminWindowMs,
-  max: env.rateLimit.adminMax,
-  message: { success: false, message: 'Too many manager requests, please try again shortly.' },
 }))
 
 // ── Logging ───────────────────────────────────────────────
@@ -93,14 +76,10 @@ app.use('/api/leads',       leadRoutes)
 app.use('/api/admin',       adminRoutes)
 app.use('/api/admin/roles', roleRoutes)
 app.use('/api/admin/team',  teamRoutes)
-app.use('/api/templates',     templateRoutes)
-app.use('/api/product-types', productTypeRoutes)
+app.use('/api/templates',       templateRoutes)
+app.use('/api/template-assets', templateAssetRoutes)
+app.use('/api/product-types',   productTypeRoutes)
 app.use('/api/image-ads',     imageAdRoutes)
-app.use('/api/celebrity-onboarding', celebrityOnboardingRoutes)
-app.use('/api/otp',                  otpRoutes)
-app.use('/api/admin/celebrity-managers', managerLinkRoutes)
-app.use('/api/manager',              managerRoutes)
-app.use('/api/manager/dashboard',    managerDashboardRoutes)
 
 // ── 404 ───────────────────────────────────────────────────
 app.use((_req, res) => {

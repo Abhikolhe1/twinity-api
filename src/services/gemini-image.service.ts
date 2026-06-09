@@ -110,6 +110,7 @@ export async function generateGeminiImage(params: {
 
   const upload = await s3Service.upload(params.s3Bucket, key, imageBuffer, mimeType)
 
+  // Store raw S3 URL — presigning happens at serve time so URL never expires in DB
   const imageUrl = upload.url
 
   logger.info(`[GeminiImage] Done: ${params.referenceId} → ${imageUrl}`)

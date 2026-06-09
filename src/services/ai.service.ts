@@ -6,7 +6,7 @@
  *   1. generateVoice()   — ElevenLabs TTS using celebrity's cloned voiceModelId → MP3
  *   2. creatifyAurora()  — Creatify Aurora: celebrity image + MP3 → lip-synced video (async)
  *
- * Provider calls should fail clearly when required credentials are not configured.
+ * All methods fall back to stubs when credentials are not configured.
  */
 import FormDataLib from 'form-data'
 import { logger } from '../config/logger'
@@ -78,7 +78,7 @@ async function generateVoicePreview(voiceId: string, language: string, apiKey: s
 // ─── Creatify API ─────────────────────────────────────────────────────────────
 const CREATIFY_BASE = 'https://api.creatify.ai'
 
-export interface CreatifyResult { jobId: string; status: 'submitted' }
+export interface CreatifyResult { jobId: string; status: 'submitted' | 'stub' }
 
 // ─── OpenAI API ───────────────────────────────────────────────────────────────
 const OPENAI_BASE = 'https://api.openai.com'
@@ -125,7 +125,8 @@ export const aiService = {
     const { elevenLabsKey } = await settingsService.get()
 
     if (!elevenLabsKey) {
-      throw new Error('ElevenLabs API key is not configured in admin settings')
+      logger.warn('[AI] ElevenLabs key not set — returning stub')
+      return { jobId: `stub-voice-${Date.now()}`, audioUrl: 'https://stub-audio.mp3', durationSecs: 30 }
     }
 
     // Request raw PCM so we can pad silence in pure Node.js (no ffmpeg needed)
@@ -217,7 +218,8 @@ export const aiService = {
     const { elevenLabsKey } = await settingsService.get()
 
     if (!elevenLabsKey) {
-      throw new Error('ElevenLabs API key is not configured in admin settings')
+      logger.warn('[AI] ElevenLabs key not set — returning stub voice ID')
+      return { voiceId: params.existingVoiceId ?? `stub-voice-${Date.now()}` }
     }
 
     // Use form-data package — Node.js native FormData + Blob does not
@@ -329,8 +331,10 @@ export const aiService = {
     backgroundImageUrl?: string
   }): Promise<CreatifyResult> {
     const { creatifyApiId, creatifyApiKey } = await settingsService.get()
+
     if (!creatifyApiId || !creatifyApiKey) {
-      throw new Error('Creatify API credentials are not configured in admin settings')
+      logger.warn('[AI] Creatify API ID / key not set — returning stub')
+      return { jobId: `stub-creatify-${Date.now()}`, status: 'stub' }
     }
 
     if (!params.imageUrl) throw new Error('Creatify Aurora: imageUrl is empty — upload a photo for this celebrity in the admin panel')
@@ -351,7 +355,7 @@ export const aiService = {
       },
       body: JSON.stringify({
         audio:                 params.audioUrl,
-        image:                 params.backgroundImageUrl ?? params.imageUrl,
+        image:                 params.imageUrl,
         name:                  params.referenceId,
         text_prompt:           textPrompt,
         prompt_guidance_scale: 1,
@@ -363,12 +367,6 @@ export const aiService = {
         const text = await res.text()
         if (!text) throw new Error(`Creatify Aurora (${res.status}): empty response body`)
         const data = JSON.parse(text) as { id?: string; status?: string }
-        // Creatify returns an array like ["Not enough credits"] on billing errors
-        if (Array.isArray(data)) {
-          const msg = (data as string[]).join(', ')
-          if (msg.toLowerCase().includes('credit')) throw new Error(`Creatify account has no credits — top up at creatify.ai to continue (${msg})`)
-          throw new Error(`Creatify Aurora rejected the request: ${msg}`)
-        }
         if (!data.id) throw new Error(`Creatify Aurora: no id in response: ${text}`)
         logger.info(`[AI] Creatify Aurora job submitted: id=${data.id}`)
         return { jobId: data.id, status: 'submitted' as const }
@@ -640,7 +638,8 @@ export const aiService = {
     const { elevenLabsKey } = await settingsService.get()
 
     if (!elevenLabsKey) {
-      throw new Error('ElevenLabs API key is not configured in admin settings')
+      logger.warn('[AI] ElevenLabs key not set — returning stub for changeVoice')
+      return { jobId: `stub-sts-${Date.now()}`, audioUrl: 'https://stub-audio.mp3' }
     }
 
     const form = new FormDataLib()
@@ -680,4 +679,3 @@ export const aiService = {
     return { jobId, audioUrl }
   },
 }
-
