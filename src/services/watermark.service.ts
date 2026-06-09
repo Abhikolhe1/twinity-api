@@ -133,26 +133,21 @@ function buildDrawtextFilter(text: string, opacity: number, position: string, fo
 
 function buildOverlayFilter(opacity: number, position: string): string {
   const pad = 24
-  let x: string
-  let y: string
 
-  if (position.includes('Left'))        x = `${pad}`
-  else if (position.includes('Right'))  x = `main_w-overlay_w-${pad}`
-  else                                  x = `(main_w-overlay_w)/2`
+  const x = position.includes('Left')  ? `${pad}`
+    : position.includes('Right') ? `main_w-overlay_w-${pad}`
+    : `(main_w-overlay_w)/2`
 
-  if (position.startsWith('Top'))       y = `${pad}`
-  else if (position === 'Center')       y = `(main_h-overlay_h)/2`
-  else                                  y = `main_h-overlay_h-${pad}`
+  const y = position.startsWith('Top') ? `${pad}`
+    : position === 'Center' ? `(main_h-overlay_h)/2`
+    : `main_h-overlay_h-${pad}`
 
-  // Scale the watermark relative to the base video using scale2ref so ffmpeg
-  // has access to the main video dimensions inside the filter graph.
-  // Then apply opacity via colorchannelmixer (alpha channel scale).
-  const alphaVal = opacity.toFixed(4)
-  return [
-    `[1:v][0:v]scale2ref=w='min(iw,main_w*0.25)':h='ow/mdar'[wm][base];`,
-    `[wm]format=rgba,colorchannelmixer=aa=${alphaVal}[wmf];`,
-    `[base][wmf]overlay=${x}:${y}`,
-  ].join('')
+  const alpha = opacity.toFixed(4)
+
+  // Scale watermark to 200 px wide (even height avoids codec alignment errors),
+  // ensure rgba so colorchannelmixer can scale the alpha channel for opacity.
+  // format=auto on overlay handles yuv/rgb pixel-format negotiation with the video.
+  return `[1:v]scale=84:-2,format=rgba,colorchannelmixer=aa=${alpha}[wm];[0:v][wm]overlay=${x}:${y}:format=auto`
 }
 
 // ── Core watermarking ─────────────────────────────────────────────────────────
@@ -166,7 +161,7 @@ async function applyWatermark(videoUrl: string, referenceId: string): Promise<Wa
   const settings       = await settingsService.get()
   const opacity        = Math.min(1, Math.max(0, parseFloat(settings.watermarkOpacity || '0.70')))
   const position       = settings.watermarkPosition || 'Bottom Center'
-  const watermarkImage = (await s3Service.presignIfS3(settings.watermarkImageUrl)) || settings.watermarkImageUrl || ''
+  const watermarkImage = settings.watermarkImageUrl || ''
 
   logger.info(`[Watermark] Starting: job=${referenceId}, mode=${watermarkImage ? 'image' : 'text'}, position=${position}, opacity=${opacity}`)
 
@@ -183,7 +178,8 @@ async function applyWatermark(videoUrl: string, referenceId: string): Promise<Wa
     await writeFile(inputPath, videoBuffer)
 
     if (imagePath && watermarkImage) {
-      const imgRes = await fetch(watermarkImage)
+      const fetchUrl = await s3Service.presignIfS3(watermarkImage) ?? watermarkImage
+      const imgRes   = await fetch(fetchUrl)
       if (!imgRes.ok) throw new Error(`Failed to download watermark image (HTTP ${imgRes.status})`)
       await writeFile(imagePath, Buffer.from(await imgRes.arrayBuffer()))
     }
@@ -222,8 +218,7 @@ async function applyWatermark(videoUrl: string, referenceId: string): Promise<Wa
       s3Service.upload(s3Bucket, `jobs/${referenceId}/preview-watermarked.mp4`, outBuffer,   'video/mp4'),
     ])
 
-    // Store the raw S3 URL (no presigned query string) — presigning happens
-    // on-demand in signJobUrls when serving the job to clients.
+    // Store raw S3 URLs — presigning happens at serve time so URLs never expire in DB
     const cleanUrl       = cleanUpload.url
     const watermarkedUrl = watermarkedUpload.url
 

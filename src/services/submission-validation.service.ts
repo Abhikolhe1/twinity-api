@@ -19,6 +19,11 @@ type GeographicAvailability = {
   restrictedRegions?: string[]
 }
 
+type CelebrityApprovalPreferences = {
+  commercialLicenseNumber?: string
+  commercialLicenseDocumentUrl?: string
+}
+
 export type SubmissionValidationPayload = {
   celebrityId?: string
   productType?: string
@@ -175,6 +180,27 @@ function findMentionedTerm(text: string, terms: string[]): string | null {
   return null
 }
 
+function parseApprovalPreferences(input: unknown): CelebrityApprovalPreferences {
+  if (!input || typeof input !== 'object') return {}
+  const value = input as Record<string, unknown>
+  return {
+    commercialLicenseNumber: typeof value.commercialLicenseNumber === 'string' ? value.commercialLicenseNumber.trim() : '',
+    commercialLicenseDocumentUrl: typeof value.commercialLicenseDocumentUrl === 'string' ? value.commercialLicenseDocumentUrl.trim() : '',
+  }
+}
+
+function requiresCommercialLicense(nationality?: string | null, region?: string | null): boolean {
+  const matchesRestrictedMarket = (value?: string | null) => {
+    const normalized = normalizeText(String(value || ''))
+    return normalized === 'saudi arabia'
+      || normalized === 'united arab emirates'
+      || normalized === 'uae'
+      || normalized === 'saudi'
+  }
+
+  return matchesRestrictedMarket(nationality) || matchesRestrictedMarket(region)
+}
+
 export async function validateSubmission(
   payload: SubmissionValidationPayload,
   userContext?: SubmissionUserContext,
@@ -284,6 +310,22 @@ export async function validateSubmission(
         field: 'briefObjective',
         code: 'competitor_conflict',
         message: `${celebrity.name} has a competitor restriction for ${blockedCompetitor}. Please revise the campaign brief or choose another celebrity.`,
+      })
+    }
+  }
+
+  if ((productType === 'video-ad' || productType === 'image-ad') && celebrity) {
+    const approvalPreferences = parseApprovalPreferences(celebrity.approval_preferences)
+    const hasCommercialLicense = Boolean(
+      approvalPreferences.commercialLicenseNumber?.trim()
+      || approvalPreferences.commercialLicenseDocumentUrl?.trim(),
+    )
+
+    if (requiresCommercialLicense(celebrity.nationality, celebrity.region) && !hasCommercialLicense) {
+      errors.push({
+        field: 'celebrityId',
+        code: 'commercial_license_required',
+        message: `${celebrity.name} can accept greeting requests, but commercial ads and campaigns require a Saudi Arabia or UAE license number or uploaded license document.`,
       })
     }
   }

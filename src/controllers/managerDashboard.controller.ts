@@ -5,6 +5,14 @@ import { AppError } from '../middleware/errorHandler'
 import { ManagerRequest } from '../middleware/managerAuth'
 import { auditLogService } from '../services/auditLog.service'
 import { s3Service } from '../services/s3.service'
+import { emailService } from '../services/email.service'
+import { ensureManagerLink } from '../services/managerAccess.service'
+import {
+  applyCelebrityProfileUpdate,
+  getCelebrityProfileBundle,
+  isCelebrityProfileComplete,
+  presignApprovedMediaUrls,
+} from './celebrityOnboarding.controller'
 
 type ManagedCelebrity = {
   id: string
@@ -16,6 +24,49 @@ type ManagedCelebrity = {
   thumbnail_url: string | null
   approval_preferences: unknown
   preapproved_template_ids: string[]
+}
+
+const DEFAULT_MANAGER_LINK_PERMISSIONS = [
+  'approve_requests',
+  'manage_templates',
+  'edit_pricing',
+  'view_earnings',
+  'manage_profile',
+]
+
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+function slugifyDraft(value: string): string {
+  return value.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+}
+
+async function createUniqueManagerCelebritySlug(base: string): Promise<string> {
+  const seed = slugifyDraft(base) || `celebrity-${Date.now()}`
+  let slug = seed
+  let suffix = 1
+  while (await prisma.celebrity.findUnique({ where: { slug } })) {
+    suffix += 1
+    slug = `${seed}-${suffix}`
+  }
+  return slug
+}
+
+async function requireManagedCelebrity(managerId: string, celebrityId: string) {
+  const link = await prisma.celebrityManagerLink.findFirst({
+    where: {
+      manager_id: managerId,
+      celebrity_id: celebrityId,
+      is_active: true,
+    },
+    include: {
+      celebrity: true,
+    },
+  })
+
+  if (!link?.celebrity) throw new AppError('This celebrity is not linked to your manager account', 403)
+  return link.celebrity
 }
 
 type ManagedJob = {
@@ -408,6 +459,266 @@ export async function getManagerDashboardAuditLogs(req: ManagerRequest, res: Res
     ])
 
     res.json({ success: true, logs, total, page, pages: Math.ceil(total / limit) })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function createManagerDashboardCelebrity(req: ManagerRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = { ...(req.body as Record<string, unknown>) }
+    const name = String(body.name || '').trim()
+    const contactEmail = String(body.contact_email || body.contactEmail || '').trim().toLowerCase()
+    const contactPhone = String(body.contact_phone || body.contactPhone || '').trim() || null
+
+    if (!name) throw new AppError('Celebrity name is required', 400)
+    if (!contactEmail) throw new AppError('Celebrity portal email is required', 400)
+    if (!isValidEmail(contactEmail)) throw new AppError('Enter a valid celebrity portal email', 400)
+
+    const existingAdmin = await prisma.admin.findUnique({
+      where: { email: contactEmail },
+      select: { celebrity_id: true },
+    })
+    if (existingAdmin?.celebrity_id) {
+      throw new AppError('This email is already linked to another celebrity portal account', 409)
+    }
+    if (existingAdmin && !existingAdmin.celebrity_id) {
+      throw new AppError('This email is already used by an internal admin account', 409)
+    }
+
+    const manager = await prisma.manager.findUnique({
+      where: { id: req.managerId! },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        agency_name: true,
+      },
+    })
+    if (!manager) throw new AppError('Manager account not found', 404)
+
+    const slug = await createUniqueManagerCelebritySlug(name)
+    const managerSettings = {
+      selfManaged: false,
+      agencyName: manager.agency_name || '',
+      managerName: manager.name,
+      managerEmail: manager.email,
+      managerPhone: manager.phone || '',
+      permissions: [...DEFAULT_MANAGER_LINK_PERMISSIONS],
+    }
+
+    let created: Awaited<ReturnType<typeof prisma.celebrity.create>> | null = null
+    try {
+      created = await prisma.celebrity.create({
+        data: {
+          name,
+          name_ar: '',
+          legal_name: '',
+          slug,
+          industry: '',
+          nationality: '',
+          nationality_ar: '',
+          region: '',
+          contact_email: contactEmail,
+          contact_phone: contactPhone,
+          languages: [],
+          tags: [],
+          tags_ar: [],
+          bio: '',
+          bio_ar: '',
+          social_links: {},
+          allowed_content_categories: [],
+          prohibited_industries: [],
+          competitor_brands: [],
+          geographic_availability: {
+            mode: 'global',
+            allowedRegions: [],
+            restrictedRegions: [],
+          },
+          tone_style_preferences: {
+            communicationStyle: '',
+            visualStyle: '',
+            endorsedTopics: [],
+            personalRestrictions: [],
+          },
+          approval_preferences: {
+            greetingAutoApprove: false,
+            manualReviewRequired: true,
+            slaHours: 48,
+            fastTrackEligible: false,
+            templatePolicyReviewed: false,
+            commercialLicenseNumber: '',
+            commercialLicenseDocumentUrl: '',
+          },
+          preapproved_template_ids: [],
+          manager_settings: managerSettings,
+          approved_media_urls: [],
+          contract_acceptance: {
+            accepted: false,
+            acceptedAt: null,
+            signedName: '',
+          },
+          avatar_color: 'linear-gradient(135deg, #9a78fe, #422266)',
+          initials: name.split(' ').map((part) => part[0] || '').join('').slice(0, 3).toUpperCase() || 'CE',
+          thumbnail_url: null,
+          voice_model_id: null,
+          training_audio_url: null,
+          is_active: false,
+          is_featured: false,
+          onboarding_status: 'pending_review',
+          applied_at: new Date(),
+          reviewed_at: null,
+          review_notes: null,
+          price_range: {
+            greeting: { min: 0, max: 0 },
+            'video-ad': { min: 0, max: 0 },
+          },
+          total_orders: 0,
+        },
+      })
+
+      const updatePayload: Record<string, unknown> = {
+        ...body,
+        contact_email: contactEmail,
+        contact_phone: contactPhone,
+        manager_settings: managerSettings,
+      }
+
+      const { updated } = await applyCelebrityProfileUpdate(created.id, updatePayload)
+
+      await ensureManagerLink({
+        celebrityId: created.id,
+        managerId: manager.id,
+        permissions: [...DEFAULT_MANAGER_LINK_PERMISSIONS],
+        linkedBy: manager.id,
+        notes: manager.agency_name ? `Agency: ${manager.agency_name}` : 'Created from manager portal',
+      })
+
+      res.status(201).json({
+        success: true,
+        data: {
+          ...updated,
+          thumbnail_url: await s3Service.presignIfS3(updated.thumbnail_url ?? undefined),
+          approved_media_urls: await presignApprovedMediaUrls(updated.approved_media_urls ?? []),
+        },
+        message: 'Celebrity created and linked to this manager workspace.',
+      })
+    } catch (err) {
+      if (created?.id) {
+        await prisma.celebrityManagerLink.deleteMany({ where: { celebrity_id: created.id } }).catch(() => null)
+        await prisma.celebrity.delete({ where: { id: created.id } }).catch(() => null)
+      }
+      throw err
+    }
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function getManagerDashboardCelebrityProfile(req: ManagerRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await requireManagedCelebrity(req.managerId!, req.params.celebrityId)
+    const { celebrity, templates } = await getCelebrityProfileBundle(req.params.celebrityId)
+
+    res.json({
+      success: true,
+      data: {
+        ...celebrity,
+        thumbnail_url: await s3Service.presignIfS3(celebrity.thumbnail_url ?? undefined),
+        approved_media_urls: await presignApprovedMediaUrls(celebrity.approved_media_urls ?? []),
+      },
+      templates,
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function updateManagerDashboardCelebrityProfile(req: ManagerRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const celebrity = await requireManagedCelebrity(req.managerId!, req.params.celebrityId)
+    const manager = await prisma.manager.findUnique({
+      where: { id: req.managerId! },
+      select: {
+        name: true,
+        email: true,
+        phone: true,
+        agency_name: true,
+      },
+    })
+    if (!manager) throw new AppError('Manager account not found', 404)
+    const body = { ...(req.body as Record<string, unknown>) }
+
+    if ('manager_settings' in body) {
+      body.manager_settings = {
+        selfManaged: false,
+        agencyName: manager.agency_name || '',
+        managerName: manager.name,
+        managerEmail: manager.email,
+        managerPhone: manager.phone || '',
+        permissions: [...DEFAULT_MANAGER_LINK_PERMISSIONS],
+      }
+    }
+
+    const { updated, profileReady } = await applyCelebrityProfileUpdate(req.params.celebrityId, body)
+
+    res.json({
+      success: true,
+      data: {
+        ...updated,
+        thumbnail_url: await s3Service.presignIfS3(updated.thumbnail_url ?? undefined),
+        approved_media_urls: await presignApprovedMediaUrls(updated.approved_media_urls ?? []),
+      },
+      profileReady,
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function submitManagerDashboardCelebrityProfile(req: ManagerRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const celebrity = await requireManagedCelebrity(req.managerId!, req.params.celebrityId)
+    const manager = await prisma.manager.findUnique({
+      where: { id: req.managerId! },
+      select: {
+        name: true,
+        email: true,
+      },
+    })
+    if (!manager) throw new AppError('Manager account not found', 404)
+    if (!celebrity.contact_email) throw new AppError('Celebrity portal email is required before submission', 400)
+    if (!isCelebrityProfileComplete(celebrity)) {
+      throw new AppError('Complete all required profile sections before submitting for review', 400)
+    }
+
+    await prisma.celebrity.update({
+      where: { id: celebrity.id },
+      data: {
+        onboarding_status: 'pending_review',
+        is_active: false,
+        review_notes: null,
+      },
+    })
+
+    await Promise.all([
+      emailService.sendManagerCelebrityPendingReviewEmail(manager.email, manager.name, celebrity.name),
+      emailService.sendCelebrityManagerSubmittedProfileEmail(celebrity.contact_email, celebrity.name, manager.name),
+    ])
+
+    res.json({
+      success: true,
+      message: 'Celebrity profile submitted for platform review. Pending verification emails were sent.',
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function activateManagerDashboardCelebrityProfile(req: ManagerRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    throw new AppError('Managers cannot activate celebrities directly. Submit the profile for platform review instead.', 403)
   } catch (err) {
     next(err)
   }

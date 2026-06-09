@@ -49,10 +49,10 @@ app.use(cors({
 // The verify callback stores the raw buffer on req so webhook handlers
 // can verify HMAC signatures (e.g. Sync.so Sync-Signature header).
 app.use(express.json({
-  limit: '10mb',
+  limit: '25mb',
   verify: (req: any, _res, buf) => { req.rawBody = buf },
 }))
-app.use(express.urlencoded({ extended: true }))
+app.use(express.urlencoded({ extended: true, limit: '25mb' }))
 
 // ── Webhooks (before rate-limit — server-to-server callbacks) ─────────────
 app.use('/api/webhooks', webhookRoutes)

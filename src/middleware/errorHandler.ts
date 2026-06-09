@@ -17,6 +17,13 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   }
 
   if (err instanceof Error) {
+    if ((err as { type?: string }).type === 'entity.too.large') {
+      res.status(413).json({
+        success: false,
+        message: 'Uploaded profile payload is too large. Please reduce media size or upload fewer files at once.',
+      })
+      return
+    }
     // Mongoose duplicate key
     if ((err as NodeJS.ErrnoException).name === 'MongoServerError' && (err as { code?: number }).code === 11000) {
       res.status(409).json({ success: false, message: 'A record with this value already exists' })

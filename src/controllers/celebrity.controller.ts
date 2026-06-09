@@ -7,6 +7,44 @@ import { s3Service } from '../services/s3.service'
 import { settingsService } from '../services/settings.service'
 import { logger } from '../config/logger'
 
+type CommercialApprovalPreferences = {
+  commercialLicenseNumber?: string
+  commercialLicenseDocumentUrl?: string
+}
+
+function normalizeMarketText(value?: string | null): string {
+  return String(value || '').trim().toLowerCase()
+}
+
+function requiresCommercialLicense(nationality?: string | null, region?: string | null): boolean {
+  const isRestrictedMarket = (value?: string | null) => {
+    const normalized = normalizeMarketText(value)
+    return normalized === 'saudi arabia'
+      || normalized === 'saudi'
+      || normalized === 'uae'
+      || normalized === 'united arab emirates'
+  }
+
+  return isRestrictedMarket(nationality) || isRestrictedMarket(region)
+}
+
+function isCommerciallyEligible(celebrity: {
+  nationality?: string | null
+  region?: string | null
+  approval_preferences?: unknown
+}): boolean {
+  if (!requiresCommercialLicense(celebrity.nationality, celebrity.region)) return true
+
+  const approvalPreferences = celebrity.approval_preferences && typeof celebrity.approval_preferences === 'object'
+    ? celebrity.approval_preferences as CommercialApprovalPreferences
+    : {}
+
+  return Boolean(
+    approvalPreferences.commercialLicenseNumber?.trim()
+    || approvalPreferences.commercialLicenseDocumentUrl?.trim(),
+  )
+}
+
 async function maybeProcessThumbnail(thumbnailUrl: string | undefined, processThumbnail: boolean): Promise<string | undefined> {
   if (!processThumbnail) return thumbnailUrl
   if (!thumbnailUrl?.startsWith('data:')) return thumbnailUrl
@@ -92,7 +130,7 @@ function isCelebrityProfileReadyForActivation(celebrity: any): boolean {
 
 export async function listCelebrities(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { industry, search, featured } = req.query
+    const { industry, search, featured, productType } = req.query
     const where: Record<string, unknown> = { is_active: true }
     if (industry && industry !== 'all') where.industry = industry
     if (featured === 'true') where.is_featured = true
@@ -106,7 +144,10 @@ export async function listCelebrities(req: Request, res: Response, next: NextFun
       where,
       orderBy: [{ is_featured: 'desc' }, { total_orders: 'desc' }],
     })
-    const data = await Promise.all(raw.map(c => signDoc(c as unknown as Record<string, unknown>)))
+    const filteredRaw = String(productType || '').trim() === 'video-ad' || String(productType || '').trim() === 'image-ad'
+      ? raw.filter((celebrity) => isCommerciallyEligible(celebrity))
+      : raw
+    const data = await Promise.all(filteredRaw.map(c => signDoc(c as unknown as Record<string, unknown>)))
     res.json({ success: true, data, total: data.length })
   } catch (err) {
     next(err)

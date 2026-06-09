@@ -404,6 +404,96 @@ export const emailService = {
     )
   },
 
+  async sendManagerCelebrityAssignmentEmail(email: string, managerName: string, celebrityName: string): Promise<void> {
+    const managerLink = `${env.cors.adminUrl}/manager/celebrities`
+    const firstName = managerName.split(' ')[0]
+    const body = `
+      <h1 style="margin:0 0 6px;font-size:24px;font-weight:700;color:#1a0a30;">A celebrity draft has been assigned to you</h1>
+      <p style="margin:0 0 24px;font-size:15px;color:#4a3465;line-height:1.6;">
+        Hi ${firstName}, <strong>${celebrityName}</strong> has been added under your manager workspace. You can continue the profile setup and submit it for superadmin review from the manager portal.
+      </p>
+
+      ${ctaButton(managerLink, 'Open Manager Workspace')}
+
+      ${divider()}
+
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+        <tr>
+          <td style="background:#F8F5FF;border-left:3px solid #9A78FE;border-radius:0 8px 8px 0;padding:14px 18px;">
+            <p style="margin:0;font-size:13px;color:#422266;line-height:1.6;">
+              Keep the celebrity profile complete before submitting it. The celebrity has also received portal access so they can review their setup if needed.
+            </p>
+          </td>
+        </tr>
+      </table>
+    `
+
+    await send(
+      email,
+      `Celebrity assigned: ${celebrityName}`,
+      layout('Celebrity assigned', 'A new celebrity draft is ready in your manager workspace.', body),
+    )
+  },
+
+  async sendManagerCelebrityPendingReviewEmail(email: string, managerName: string, celebrityName: string): Promise<void> {
+    const managerLink = `${env.cors.adminUrl}/manager/celebrities`
+    const firstName = managerName.split(' ')[0]
+    const body = `
+      <h1 style="margin:0 0 6px;font-size:24px;font-weight:700;color:#1a0a30;">Celebrity submitted for platform review</h1>
+      <p style="margin:0 0 24px;font-size:15px;color:#4a3465;line-height:1.6;">
+        Hi ${firstName}, the profile for <strong>${celebrityName}</strong> has been submitted successfully and is now pending platform verification.
+      </p>
+
+      ${ctaButton(managerLink, 'Open Manager Workspace')}
+
+      ${divider()}
+
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+        <tr>
+          <td style="background:#F8F5FF;border-left:3px solid #9A78FE;border-radius:0 8px 8px 0;padding:14px 18px;">
+            <p style="margin:0;font-size:13px;color:#422266;line-height:1.6;">
+              Once the platform team approves this profile, the celebrity will receive their portal credentials and you will receive a confirmation email.
+            </p>
+          </td>
+        </tr>
+      </table>
+    `
+
+    await send(
+      email,
+      `Verification pending: ${celebrityName}`,
+      layout('Celebrity pending verification', 'The platform team will review this celebrity profile next.', body),
+    )
+  },
+
+  async sendCelebrityManagerSubmittedProfileEmail(email: string, celebrityName: string, managerName: string): Promise<void> {
+    const firstName = celebrityName.split(' ')[0]
+    const body = `
+      <h1 style="margin:0 0 6px;font-size:24px;font-weight:700;color:#1a0a30;">Your profile has been submitted for review</h1>
+      <p style="margin:0 0 24px;font-size:15px;color:#4a3465;line-height:1.6;">
+        Hi ${firstName}, your manager <strong>${managerName}</strong> has completed the onboarding profile on your behalf and submitted it to the Twinity platform team for verification.
+      </p>
+
+      ${divider()}
+
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+        <tr>
+          <td style="background:#FFF7ED;border-left:3px solid #F59E0B;border-radius:0 8px 8px 0;padding:14px 18px;">
+            <p style="margin:0;font-size:13px;color:#92400E;line-height:1.6;">
+              Once the platform approves your profile and activates your account, you will receive a separate email with your portal credentials and dashboard access.
+            </p>
+          </td>
+        </tr>
+      </table>
+    `
+
+    await send(
+      email,
+      'Your Twinity profile is pending verification',
+      layout('Profile pending verification', 'Your manager has submitted your profile for platform review.', body),
+    )
+  },
+
   async sendNewLeadNotification(lead: ILead): Promise<void> {
     const adminLink = `${env.cors.adminUrl}/leads`
     const body = `

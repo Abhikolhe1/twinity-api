@@ -28,11 +28,16 @@ import {
   updateMyCelebrityProfile,
 } from '../controllers/celebrityOnboarding.controller'
 import {
+  addCelebrityMasterValue,
   addBlockedWord,
+  getCelebrityMasterByType,
+  getCelebrityMasters,
   deleteWatermarkImage,
   getBlockedWords,
   getSettings,
+  replaceCelebrityMasterValues,
   removeBlockedWord,
+  updateCelebrityMasters,
   updateSettings,
   uploadWatermarkImage,
 } from '../controllers/settings.controller'
@@ -76,6 +81,11 @@ router.put('/celebrity/profile', requireAdmin, requirePermission('celebrity.prof
 router.post('/celebrity/profile/submit', requireAdmin, requirePermission('celebrity.profile.update'), submitMyCelebrityProfileForReview)
 router.get('/settings', requireAdmin, requirePermission('settings.view'), getSettings)
 router.put('/settings', requireAdmin, requirePermission('settings.manage'), updateSettings)
+router.get('/settings/celebrity-masters', requireAdmin, requirePermission('settings.view'), getCelebrityMasters)
+router.put('/settings/celebrity-masters', requireAdmin, requirePermission('settings.manage'), updateCelebrityMasters)
+router.get('/settings/celebrity-masters/:type', requireAdmin, requirePermission('settings.view'), getCelebrityMasterByType)
+router.post('/settings/celebrity-masters/:type', requireAdmin, requirePermission('settings.manage'), addCelebrityMasterValue)
+router.put('/settings/celebrity-masters/:type', requireAdmin, requirePermission('settings.manage'), replaceCelebrityMasterValues)
 router.post('/settings/watermark-image', requireAdmin, requirePermission('settings.manage'), watermarkUpload, uploadWatermarkImage)
 router.delete('/settings/watermark-image', requireAdmin, requirePermission('settings.manage'), deleteWatermarkImage)
 router.get('/settings/blocked-words', getBlockedWords)

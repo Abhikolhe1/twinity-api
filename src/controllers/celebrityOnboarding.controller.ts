@@ -79,6 +79,8 @@ type ApprovalPreferences = {
   slaHours: number
   fastTrackEligible: boolean
   templatePolicyReviewed: boolean
+  commercialLicenseNumber: string
+  commercialLicenseDocumentUrl: string
 }
 
 type ManagerSettings = {
@@ -136,6 +138,8 @@ function normalizeApprovalPreferences(value: unknown): ApprovalPreferences {
     slaHours: Number.isFinite(rawSla) && rawSla > 0 ? rawSla : 48,
     fastTrackEligible: Boolean(input.fastTrackEligible),
     templatePolicyReviewed: Boolean(input.templatePolicyReviewed),
+    commercialLicenseNumber: String(input.commercialLicenseNumber || '').trim(),
+    commercialLicenseDocumentUrl: String(input.commercialLicenseDocumentUrl || '').trim(),
   }
 }
 
@@ -187,16 +191,23 @@ function generateTemporaryPassword(): string {
   return CELEBRITY_TEMP_PASSWORD
 }
 
-async function createOrRefreshCelebrityPortalAccess(
+export async function createOrRefreshCelebrityPortalAccess(
   celebrity: {
     id: string
     name: string
     contact_email: string | null
   },
-  approvedByAdminId: string,
+  approvedByAdminId?: string,
+  options: {
+    syncCelebrityStatus?: boolean
+  } = {},
 ) {
   if (!celebrity.contact_email) throw new AppError('Application email is missing', 400)
 
+  const celebrityRecord = await prisma.celebrity.findUnique({ where: { id: celebrity.id } })
+  if (!celebrityRecord) throw new AppError('Celebrity not found', 404)
+
+  const profileReadyForActivation = isCelebrityProfileComplete(celebrityRecord)
   const normalizedEmail = celebrity.contact_email.toLowerCase()
   const roleId = await ensureCelebrityPortalRole(approvedByAdminId)
   const temporaryPassword = generateTemporaryPassword()
@@ -232,7 +243,7 @@ async function createOrRefreshCelebrityPortalAccess(
           celebrity_id: celebrity.id,
           is_active: true,
           must_change_password: true,
-          profile_completed: false,
+          profile_completed: profileReadyForActivation,
         },
       })
     : await prisma.admin.upsert({
@@ -245,7 +256,7 @@ async function createOrRefreshCelebrityPortalAccess(
           celebrity_id: celebrity.id,
           is_active: true,
           must_change_password: true,
-          profile_completed: false,
+          profile_completed: profileReadyForActivation,
         },
         create: {
           name: celebrity.name,
@@ -256,20 +267,24 @@ async function createOrRefreshCelebrityPortalAccess(
           celebrity_id: celebrity.id,
           is_active: true,
           must_change_password: true,
-          profile_completed: false,
+          profile_completed: profileReadyForActivation,
         },
       })
 
-  const updatedCelebrity = await prisma.celebrity.update({
-    where: { id: celebrity.id },
-    data: {
-      onboarding_status: 'approved',
-      is_active: false,
-      reviewed_at: new Date(),
-      reviewed_by_admin_id: approvedByAdminId,
-      review_notes: null,
-    },
-  })
+  const updatedCelebrity = options.syncCelebrityStatus === false
+    ? await prisma.celebrity.findUnique({ where: { id: celebrity.id } })
+    : await prisma.celebrity.update({
+        where: { id: celebrity.id },
+        data: {
+          onboarding_status: 'approved',
+          is_active: profileReadyForActivation,
+          reviewed_at: new Date(),
+          reviewed_by_admin_id: approvedByAdminId ?? null,
+          review_notes: null,
+        },
+      })
+
+  if (!updatedCelebrity) throw new AppError('Celebrity not found after portal access creation', 404)
 
   await emailService.sendCelebrityPortalWelcomeEmail(
     admin.email,
@@ -284,7 +299,7 @@ async function createOrRefreshCelebrityPortalAccess(
   }
 }
 
-function isCelebrityProfileComplete(celebrity: {
+export function isCelebrityProfileComplete(celebrity: {
   name: string
   name_ar: string
   legal_name: string | null
@@ -381,6 +396,7 @@ function getExtensionFromMime(mimeType: string): string {
   if (normalized === 'audio/wav' || normalized === 'audio/x-wav') return 'wav'
   if (normalized === 'audio/mp4') return 'm4a'
   if (normalized === 'audio/x-m4a') return 'm4a'
+  if (normalized === 'application/pdf') return 'pdf'
   const suffix = normalized.split('/')[1] || 'bin'
   return suffix.replace(/[^a-z0-9]/g, '') || 'bin'
 }
@@ -415,8 +431,13 @@ async function resolveApprovedMediaUploads(urls: string[], slug: string): Promis
       const match = normalized.match(/^data:([^;]+);base64,(.+)$/)
       if (!match) return normalized
 
-      const mimeType = match[1]
-      const buffer = Buffer.from(match[2], 'base64')
+      const sourceMimeType = match[1]
+      const sourceBuffer = Buffer.from(match[2], 'base64')
+      const isImage = sourceMimeType.toLowerCase().startsWith('image/')
+      const buffer = isImage
+        ? await sharp(sourceBuffer).jpeg({ quality: 90 }).toBuffer()
+        : sourceBuffer
+      const mimeType = isImage ? 'image/jpeg' : sourceMimeType
       const ext = getExtensionFromMime(mimeType)
       const key = `celebrities/${slug}/approved-media/${timestamp}-${index + 1}.${ext}`
       const result = await s3Service.upload(s3Bucket, key, buffer, mimeType)
@@ -426,7 +447,25 @@ async function resolveApprovedMediaUploads(urls: string[], slug: string): Promis
   )
 }
 
-async function getCelebrityProfileBundle(celebrityId: string) {
+async function resolveCommercialLicenseUpload(documentUrl: string | undefined, slug: string): Promise<string | undefined> {
+  const normalized = stripSignedS3Url(documentUrl)
+  if (!normalized) return undefined
+  if (!normalized.startsWith('data:')) return normalized
+
+  const match = normalized.match(/^data:([^;]+);base64,(.+)$/)
+  if (!match) return normalized
+
+  const mimeType = match[1]
+  const buffer = Buffer.from(match[2], 'base64')
+  const ext = getExtensionFromMime(mimeType)
+  const { s3Bucket } = await settingsService.get()
+  const key = `celebrities/${slug}/commercial-license/license-${Date.now()}.${ext}`
+  const result = await s3Service.upload(s3Bucket, key, buffer, mimeType)
+  logger.info(`[Celebrity Onboarding] Commercial license uploaded to S3: ${result.url}`)
+  return result.url
+}
+
+export async function getCelebrityProfileBundle(celebrityId: string) {
   const [celebrity, templates] = await Promise.all([
     prisma.celebrity.findUnique({ where: { id: celebrityId } }),
     prisma.template.findMany({
@@ -441,6 +480,12 @@ async function getCelebrityProfileBundle(celebrityId: string) {
     celebrity,
     templates,
   }
+}
+
+export async function presignApprovedMediaUrls(urls: string[]): Promise<string[]> {
+  return Promise.all(
+    urls.map(async (url) => (await s3Service.presignIfS3(url)) || url),
+  )
 }
 
 export async function listAvailableManagersForProfile(_req: AdminRequest, res: Response, next: NextFunction): Promise<void> {
@@ -463,14 +508,17 @@ export async function listAvailableManagersForProfile(_req: AdminRequest, res: R
   }
 }
 
-async function applyCelebrityProfileUpdate(
+export async function applyCelebrityProfileUpdate(
   celebrityId: string,
   body: Record<string, unknown>,
   actorAdminId?: string,
 ) {
   const existingCelebrity = await prisma.celebrity.findUnique({
     where: { id: celebrityId },
-    select: { slug: true },
+    select: {
+      slug: true,
+      approval_preferences: true,
+    },
   })
   if (!existingCelebrity) throw new AppError('Celebrity profile not found', 404)
 
@@ -531,11 +579,22 @@ async function applyCelebrityProfileUpdate(
     if (toneStylePreferences.endorsedTopics.length === 0) throw new AppError('At least one endorsed topic is required', 400)
   }
   if ('approval_preferences' in body) {
-    const approvalPreferences = normalizeApprovalPreferences(body.approval_preferences)
+    const currentApprovalPreferences = normalizeApprovalPreferences(existingCelebrity.approval_preferences)
+    const incomingApprovalPreferences = body.approval_preferences && typeof body.approval_preferences === 'object'
+      ? body.approval_preferences as Record<string, unknown>
+      : {}
+    const approvalPreferences = {
+      ...currentApprovalPreferences,
+      ...normalizeApprovalPreferences(incomingApprovalPreferences),
+    }
+    const incomingKeys = Object.keys(incomingApprovalPreferences)
+    const licenseOnlyUpdate = incomingKeys.length > 0 && incomingKeys.every((key) => (
+      key === 'commercialLicenseNumber' || key === 'commercialLicenseDocumentUrl'
+    ))
     if (!Number.isFinite(approvalPreferences.slaHours) || approvalPreferences.slaHours <= 0) {
       throw new AppError('SLA hours must be greater than zero', 400)
     }
-    if (!approvalPreferences.templatePolicyReviewed) {
+    if (!licenseOnlyUpdate && !approvalPreferences.templatePolicyReviewed) {
       throw new AppError('Template approval policy must be reviewed before saving', 400)
     }
   }
@@ -604,7 +663,16 @@ async function applyCelebrityProfileUpdate(
   if ('competitor_brands' in body) updateData.competitor_brands = normalizeList(body.competitor_brands)
   if ('geographic_availability' in body) updateData.geographic_availability = normalizeGeographicAvailability(body.geographic_availability)
   if ('tone_style_preferences' in body) updateData.tone_style_preferences = normalizeToneStylePreferences(body.tone_style_preferences)
-  if ('approval_preferences' in body) updateData.approval_preferences = normalizeApprovalPreferences(body.approval_preferences)
+  if ('approval_preferences' in body) {
+    const currentApprovalPreferences = normalizeApprovalPreferences(existingCelebrity.approval_preferences)
+    const incomingApprovalPreferences = body.approval_preferences && typeof body.approval_preferences === 'object'
+      ? body.approval_preferences as Record<string, unknown>
+      : {}
+    updateData.approval_preferences = {
+      ...currentApprovalPreferences,
+      ...normalizeApprovalPreferences(incomingApprovalPreferences),
+    }
+  }
   if ('preapproved_template_ids' in body) updateData.preapproved_template_ids = normalizeList(body.preapproved_template_ids)
   if ('manager_settings' in body) updateData.manager_settings = normalizeManagerSettings(body.manager_settings)
   if ('approved_media_urls' in body) {
@@ -651,7 +719,19 @@ async function applyCelebrityProfileUpdate(
 
 export async function submitCelebrityOnboarding(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { name, email, phone, region, nationality, industry, languages, bio, otpCode } = req.body as Record<string, unknown>
+    const {
+      name,
+      email,
+      phone,
+      region,
+      nationality,
+      industry,
+      languages,
+      bio,
+      otpCode,
+      commercialLicenseNumber,
+      commercialLicenseDocumentUrl,
+    } = req.body as Record<string, unknown>
 
     if (!String(name || '').trim()) throw new AppError('Name is required', 400)
     if (!String(email || '').trim()) throw new AppError('Email is required', 400)
@@ -681,6 +761,14 @@ export async function submitCelebrityOnboarding(req: Request, res: Response, nex
     }
 
     const slug = await createUniqueSlug(String(name))
+    const normalizedApprovalPreferences = normalizeApprovalPreferences({
+      commercialLicenseNumber,
+      commercialLicenseDocumentUrl: await resolveCommercialLicenseUpload(
+        String(commercialLicenseDocumentUrl || '').trim() || undefined,
+        slug,
+      ),
+    })
+
     await prisma.celebrity.create({
       data: {
         name: String(name).trim(),
@@ -696,6 +784,7 @@ export async function submitCelebrityOnboarding(req: Request, res: Response, nex
         tags: [],
         tags_ar: [],
         bio: String(bio || '').trim() || undefined,
+        approval_preferences: normalizedApprovalPreferences,
         initials: makeInitials(String(name)),
         is_active: false,
         onboarding_status: 'pending_review',
@@ -705,6 +794,38 @@ export async function submitCelebrityOnboarding(req: Request, res: Response, nex
     res.status(201).json({
       success: true,
       message: 'Application received. We will contact you after review.',
+    })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export async function getCelebrityOnboardingMasters(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const rows = await prisma.setting.findMany({
+      where: {
+        key: {
+          in: ['celebrity_language_master', 'celebrity_nationality_master'],
+        },
+      },
+    })
+
+    const rowByKey = new Map(rows.map((row) => [row.key, row.value]))
+    const parseStored = (raw?: string) => {
+      if (!raw) return []
+      try {
+        return normalizeList(JSON.parse(raw))
+      } catch {
+        return normalizeList(raw)
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        languages: parseStored(rowByKey.get('celebrity_language_master')),
+        nationalities: parseStored(rowByKey.get('celebrity_nationality_master')),
+      },
     })
   } catch (err) {
     next(err)
@@ -841,6 +962,7 @@ export async function getMyCelebrityProfile(req: AdminRequest, res: Response, ne
       data: {
         ...celebrity,
         thumbnail_url: await s3Service.presignIfS3(celebrity.thumbnail_url ?? undefined),
+        approved_media_urls: await presignApprovedMediaUrls(celebrity.approved_media_urls ?? []),
       },
       templates,
     })
@@ -860,6 +982,7 @@ export async function updateMyCelebrityProfile(req: AdminRequest, res: Response,
       data: {
         ...updated,
         thumbnail_url: await s3Service.presignIfS3(updated.thumbnail_url ?? undefined),
+        approved_media_urls: await presignApprovedMediaUrls(updated.approved_media_urls ?? []),
       },
       profileReady,
     })
@@ -876,6 +999,7 @@ export async function getCelebrityProfileByAdmin(req: AdminRequest, res: Respons
       data: {
         ...celebrity,
         thumbnail_url: await s3Service.presignIfS3(celebrity.thumbnail_url ?? undefined),
+        approved_media_urls: await presignApprovedMediaUrls(celebrity.approved_media_urls ?? []),
       },
       templates,
     })
@@ -893,6 +1017,7 @@ export async function updateCelebrityProfileByAdmin(req: AdminRequest, res: Resp
       data: {
         ...updated,
         thumbnail_url: await s3Service.presignIfS3(updated.thumbnail_url ?? undefined),
+        approved_media_urls: await presignApprovedMediaUrls(updated.approved_media_urls ?? []),
       },
       profileReady,
     })
@@ -1005,6 +1130,7 @@ export async function activateCelebrityProfile(req: AdminRequest, res: Response,
       data: {
         ...updated,
         thumbnail_url: await s3Service.presignIfS3(updated.thumbnail_url ?? undefined),
+        approved_media_urls: await presignApprovedMediaUrls(updated.approved_media_urls ?? []),
       },
       message: 'Celebrity activated for full portal access.',
     })
