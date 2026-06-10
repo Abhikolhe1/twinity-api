@@ -183,6 +183,7 @@ model Celebrity {
   portal_admin   Admin?                 @relation("CelebrityPortalAccount")
   video_jobs     VideoJob[]
   manager_links  CelebrityManagerLink[]
+  template_assets TemplateCelebrityAsset[]
 
   @@index([industry, is_active])
   @@index([onboarding_status])
@@ -350,25 +351,50 @@ model Role {
 }
 
 model Template {
-  id              String   @id @default(uuid())
-  name            String
-  name_ar         String
-  description     String
-  description_ar  String
-  purpose         String
-  purpose_ar      String
-  sample_script   String
+  id               String   @id @default(uuid())
+  name             String
+  name_ar          String
+  description      String
+  description_ar   String
+  purpose          String
+  purpose_ar       String
+  sample_script    String
   sample_script_ar String
-  product_types   String[]
-  duration        String   @default("30s")
-  is_active       Boolean  @default(true)
-  created_at      DateTime @default(now())
-  updated_at      DateTime @updatedAt
+  language         String   @default("en")
+  background_image_url    String?
+  creatify_prompt         String?
+  video_generation_prompt String?
+  product_types    String[]
+  duration         String   @default("30s")
+  is_active        Boolean  @default(true)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
 
+  celebrity_assets TemplateCelebrityAsset[]
+
+  @@index([language])
   @@index([product_types])
   @@index([is_active])
   @@index([purpose])
   @@map("templates")
+}
+
+model TemplateCelebrityAsset {
+  id                  String   @id @default(uuid())
+  template_id         String
+  celebrity_id        String
+  composite_image_url String
+  tts_model           String   @default("eleven_v3")
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  template  Template  @relation(fields: [template_id], references: [id], onDelete: Cascade)
+  celebrity Celebrity @relation(fields: [celebrity_id], references: [id], onDelete: Cascade)
+
+  @@unique([template_id, celebrity_id])
+  @@index([template_id])
+  @@index([celebrity_id])
+  @@map("template_celebrity_assets")
 }
 
 model ProductType {

@@ -35,7 +35,20 @@ async function processGreetingJob(jobId: string, job: Awaited<ReturnType<typeof 
 
     const voiceAudioUrl = (await s3Service.presignIfS3Short(job.voice_audio_url, 7200)) ?? job.voice_audio_url
     if (!celeb?.thumbnail_url) throw new Error(`Celebrity ${celeb?.name} has no thumbnail_url — upload a photo in the admin panel`)
-    const imageUrl = await s3Service.presignIfS3Short(celeb.thumbnail_url, 7200)
+
+    let imageUrl: string | undefined
+    if (job.template_id) {
+      const asset = await (prisma as any).templateCelebrityAsset.findUnique({
+        where: { template_id_celebrity_id: { template_id: job.template_id, celebrity_id: celeb.id } },
+      })
+      if (asset?.composite_image_url) {
+        imageUrl = (await s3Service.presignIfS3Short(asset.composite_image_url, 7200)) ?? asset.composite_image_url
+        logger.info(`[Queue] Using composite image for job ${job.reference_id}`)
+      }
+    }
+    if (!imageUrl) {
+      imageUrl = (await s3Service.presignIfS3Short(celeb.thumbnail_url, 7200)) ?? celeb.thumbnail_url
+    }
 
     const callbackUrl = env.serverUrl ? `${env.serverUrl}/api/webhooks/creatify` : undefined
     const backgroundImageUrl = job.background_image_url
@@ -76,10 +89,38 @@ async function processVideoAdJob(jobId: string, job: Awaited<ReturnType<typeof l
       job.scene_notes || '',
     ].filter(Boolean).join('. ')
 
-    const result = await submitSeedanceVideo({ imageUrl, referenceId: job.reference_id, callbackUrl, videoPrompt })
+    const propImageUrls = Array.isArray(job.prop_images)
+      ? (job.prop_images as string[]).filter(Boolean)
+      : []
+    const customAudioUrl = job.voice_audio_url
+      ? (await s3Service.presignIfS3Short(job.voice_audio_url, 7200)) ?? job.voice_audio_url
+      : undefined
+    const generateAudio = !customAudioUrl && typeof job.scene_notes === 'string' && job.scene_notes.includes('Background music: enabled')
 
-    await prisma.videoJob.update({ where: { id: jobId }, data: { creatify_job_id: result.requestId } })
-    logger.info(`[Queue] Video ad ${job.reference_id} submitted to fal.ai → awaiting webhook (id: ${result.requestId})`)
+    const result = await submitSeedanceVideo({
+      imageUrl,
+      referenceId: job.reference_id,
+      callbackUrl,
+      videoPrompt,
+      propImageUrls,
+      generateAudio,
+      audioUrl: customAudioUrl,
+    })
+
+    if (result.status === 'stub') {
+      const stubJobAdapter = makeJobAdapter(jobId, job.reference_id, {
+        finalVideoUrl:  imageUrl,
+        watermarkedUrl: imageUrl,
+        previewUrl:     imageUrl,
+        status:         'in-progress',
+        statusHistory:  (Array.isArray(job.status_history) ? job.status_history : []) as unknown[],
+      })
+      await applyWatermarkAndAdvanceJob(stubJobAdapter as any, imageUrl)
+      logger.info(`[Queue] Video ad ${job.reference_id} → review (stub)`)
+    } else {
+      await prisma.videoJob.update({ where: { id: jobId }, data: { creatify_job_id: result.requestId } })
+      logger.info(`[Queue] Video ad ${job.reference_id} submitted to fal.ai → awaiting webhook (id: ${result.requestId})`)
+    }
   } catch (err: any) {
     logger.error(`[Queue] Video ad ${job.reference_id} failed:`, err)
     const failedHistory = await appendHistory(jobId, { status: 'failed', timestamp: new Date().toISOString(), note: err?.message ?? 'fal.ai Seedance error' })

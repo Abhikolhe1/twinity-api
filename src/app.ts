@@ -15,6 +15,7 @@ import adminRoutes      from './routes/admin.routes'
 import roleRoutes       from './routes/role.routes'
 import teamRoutes       from './routes/team.routes'
 import templateRoutes     from './routes/template.routes'
+import templateAssetRoutes from './routes/templateAsset.routes'
 import productTypeRoutes  from './routes/productType.routes'
 import webhookRoutes      from './routes/webhook.routes'
 import imageAdRoutes      from './routes/imageAd.routes'
@@ -94,6 +95,7 @@ app.use('/api/admin',       adminRoutes)
 app.use('/api/admin/roles', roleRoutes)
 app.use('/api/admin/team',  teamRoutes)
 app.use('/api/templates',     templateRoutes)
+app.use('/api/template-assets', templateAssetRoutes)
 app.use('/api/product-types', productTypeRoutes)
 app.use('/api/image-ads',     imageAdRoutes)
 app.use('/api/celebrity-onboarding', celebrityOnboardingRoutes)

@@ -28,7 +28,7 @@ const POLL_INTERVAL_MS  = 30_000
 
 export interface SeedanceSubmitResult {
   requestId: string
-  status:    'submitted'
+  status:    'submitted' | 'stub'
 }
 
 interface FalStatusResponse {
@@ -43,16 +43,19 @@ interface FalResultResponse {
 /* ── Submit ──────────────────────────────────────────────────────────────────── */
 
 export async function submitSeedanceVideo(params: {
-  audioUrl?:   string
-  imageUrl:    string
-  referenceId: string
+  audioUrl?:      string
+  imageUrl:       string
+  referenceId:    string
   callbackUrl?: string
   videoPrompt?: string
+  propImageUrls?: string[]
+  generateAudio?: boolean
 }): Promise<SeedanceSubmitResult> {
   const { falApiKey } = await settingsService.get()
 
   if (!falApiKey) {
-    throw new Error('fal.ai API key is not configured in admin settings')
+    logger.warn('[FalVideo] fal.ai key not set — returning stub')
+    return { requestId: `stub-seedance-${Date.now()}`, status: 'stub' }
   }
 
   if (!params.imageUrl) throw new Error('Seedance: imageUrl is empty — upload a celebrity photo in the admin panel')
@@ -61,17 +64,18 @@ export async function submitSeedanceVideo(params: {
 
   logger.info(`[FalVideo] Seedance 2.0 submitting: referenceId=${params.referenceId}, prompt="${prompt}"`)
 
+  const imageUrls = [params.imageUrl, ...(params.propImageUrls ?? [])].filter(Boolean)
+
   const body: Record<string, unknown> = {
     prompt,
-    image_urls: [params.imageUrl],
+    image_urls: imageUrls,
     resolution: '720p',
     duration:   'auto',
   }
   if (params.audioUrl) {
-    body.audio_urls     = [params.audioUrl]
-    body.generate_audio = false
+    body.audio_urls = [params.audioUrl]
   } else {
-    body.generate_audio = false
+    body.generate_audio = params.generateAudio ?? false
   }
 
   // Pass webhook as a query parameter — keeps it separate from model inputs
